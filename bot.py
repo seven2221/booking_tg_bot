@@ -90,20 +90,28 @@ def create_schedule_grid_image():
     schedules = {date: get_schedule_for_day(date) for date in dates}
     conn.close()
 
-    cell_width, cell_height, padding = 450, 60, 10
-    time_font_size, group_font_size = 18, 16
+    max_slots = max(len(slots) for slots in schedules.values()) if schedules else 1
+
+    cell_width = 450
+    cell_height = 70
+    padding = 10
+
+    time_font_size = 26
+    group_font_size = 24
+    date_font_size = 32
 
     try:
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        time_font = ImageFont.truetype(font_path, time_font_size)
+        bold_font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        time_font = ImageFont.truetype(bold_font_path, time_font_size)
         group_font = ImageFont.truetype(font_path, group_font_size)
-        header_font = ImageFont.truetype(font_path.replace("Sans.ttf", "Sans-Bold.ttf"), group_font_size + 4)
+        date_font = ImageFont.truetype(bold_font_path, date_font_size)
     except OSError:
-        time_font = group_font = header_font = ImageFont.load_default()
+        time_font = group_font = date_font = ImageFont.load_default()
 
-    num_rows_per_day = len(schedules[dates[0]]) + 2 if schedules else 3
+    num_rows = max_slots + 1
     img_width = 7 * (cell_width + padding) + padding
-    img_height = 2 * (num_rows_per_day * (cell_height + padding) + padding)
+    img_height = 2 * (num_rows * (cell_height + padding)) + padding
 
     img = Image.new("RGB", (img_width, img_height), color="white")
     draw = ImageDraw.Draw(img)
@@ -111,30 +119,58 @@ def create_schedule_grid_image():
     for row_offset in range(2):
         for col, date in enumerate(dates[row_offset * 7:(row_offset + 1) * 7]):
             x = padding + col * (cell_width + padding)
-            y = padding + row_offset * (num_rows_per_day * (cell_height + padding))
-            draw.rectangle([x, y, x + cell_width, y + cell_height + padding], fill=(200, 200, 200))
-            draw.text((x + padding, y + padding), format_date(date), fill="black", font=header_font)
+            y = padding + row_offset * (num_rows * (cell_height + padding))
 
-    for row, (time, _, _) in enumerate(schedules[dates[0]], start=1):
+            draw.rectangle([x, y, x + cell_width, y + cell_height], fill=(220, 220, 220))
+
+            date_text = format_date(date)
+            text_size = draw.textbbox((0, 0), date_text, font=date_font)
+            text_width = text_size[2] - text_size[0]
+            text_height = text_size[3] - text_size[1]
+            date_x = x + (cell_width - text_width) // 2
+            date_y = y + (cell_height - text_height) // 2
+            draw.text((date_x, date_y), date_text, fill="black", font=date_font)
+
+    for row_index in range(max_slots):
+        time_slot = schedules[dates[0]][row_index][0] if row_index < len(schedules[dates[0]]) else None
+
         for row_offset in range(2):
             for col, date in enumerate(dates[row_offset * 7:(row_offset + 1) * 7]):
                 schedule = schedules[date]
-                time_data = next((t for t in schedule if t[0] == time), (time, 0, None))
-                booked, group_name = time_data[1], time_data[2] or "-"
-                bg_color = (255, 240, 200) if booked else (200, 255, 200)
                 x = padding + col * (cell_width + padding)
-                y = padding + row_offset * (num_rows_per_day * (cell_height + padding)) + row * (cell_height + padding)
-                draw.rectangle([x, y, x + cell_width, y + cell_height], fill=bg_color, outline="black", width=1)
-                draw.text((x + padding, y + (cell_height - time_font_size) // 2), time, fill="black", font=time_font)
-                group_lines = textwrap.wrap(group_name, width=30)
-                group_y = y + (cell_height - len(group_lines) * (group_font_size + 2)) // 2
-                for line in group_lines:
-                    draw.text((x + cell_width // 4 + padding, group_y), line, fill="black", font=group_font)
-                    group_y += group_font_size + 2
+                y = padding + row_offset * (num_rows * (cell_height + padding)) + (row_index + 1) * (cell_height + padding)
 
-    path = "schedule_grid.png"
-    img.save(path, dpi=(300, 300))
-    return path
+                if row_index < len(schedule):
+                    time, booked, group_name = schedule[row_index]
+                else:
+                    time, booked, group_name = "", 0, ""
+
+                bg_color = (255, 240, 200) if booked else (200, 255, 200)
+                draw.rectangle([x, y, x + cell_width, y + cell_height], fill=bg_color, outline="black", width=1)
+
+                time_text = time
+                time_x = x + padding
+                time_y = y + (cell_height - time_font_size) // 2
+                draw.text((time_x, time_y), time_text, fill="black", font=time_font)
+
+                if group_name:
+                    group_x = x + cell_width // 4 + padding
+                    max_text_width = cell_width * 3 // 4 - 2 * padding
+                    fitted_font = group_font
+
+                    while True:
+                        line_width = draw.textbbox((0, 0), group_name, font=fitted_font)[2]
+                        if line_width <= max_text_width or fitted_font.size <= 14:
+                            break
+                        fitted_font = ImageFont.truetype(font_path, fitted_font.size - 1)
+
+                    group_y = y + (cell_height - fitted_font.size) // 2
+                    draw.text((group_x, group_y), group_name, fill="black", font=fitted_font)
+
+    img_path = "schedule_grid.png"
+    img.save(img_path, dpi=(300, 300))
+    return img_path
+
 
 def show_main_menu(message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
