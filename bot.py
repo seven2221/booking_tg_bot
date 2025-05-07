@@ -4,7 +4,6 @@ import sqlite3
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
-import textwrap
 import telebot
 from telebot import types
 
@@ -22,26 +21,38 @@ user_states = {}
 def init_db():
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
+    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS slots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL,
             time TEXT NOT NULL,
-            booked INTEGER DEFAULT 0,
-            user_id INTEGER DEFAULT NULL,
-            group_name TEXT DEFAULT NULL,
-            created_by INTEGER DEFAULT NULL,
-            subscribed_users TEXT DEFAULT NULL
+            booked INTEGER DEFAULT 0
         )
     ''')
+    
+    def add_column_if_not_exists(table_name, column_name, column_definition):
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        columns = [column[1] for column in cursor.fetchall()]
+        if column_name not in columns:
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
+    
+    add_column_if_not_exists("slots", "user_id", "INTEGER DEFAULT NULL")
+    add_column_if_not_exists("slots", "group_name", "TEXT DEFAULT NULL")
+    add_column_if_not_exists("slots", "created_by", "INTEGER DEFAULT NULL")
+    add_column_if_not_exists("slots", "subscribed_users", "TEXT DEFAULT NULL")
+    add_column_if_not_exists("slots", "booking_type", "TEXT DEFAULT NULL")
+    add_column_if_not_exists("slots", "comment", "TEXT DEFAULT NULL")
+    
     cursor.execute('SELECT COUNT(*) FROM slots')
     if cursor.fetchone()[0] == 0:
-        times = [f"{hour}:00" for hour in range(11, 24, 2)]
+        times = [f"{hour}:00" for hour in range(11, 24)]
         today = datetime.now()
         for i in range(30):
             date = (today + timedelta(days=i)).strftime('%Y-%m-%d')
             for time in times:
                 cursor.execute('INSERT INTO slots (date, time, booked) VALUES (?, ?, ?)', (date, time, 0))
+    
     conn.commit()
     conn.close()
 
@@ -66,23 +77,24 @@ def get_schedule_for_day(date):
     conn.close()
     return schedule
 
-def book_slot(date, time, user_id, group_name):
+def book_slot(date, time, user_id, group_name, booking_type, comment):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
     cursor.execute('''
         UPDATE slots 
-        SET booked = 1, user_id = ?, group_name = ?, created_by = ? 
+        SET booked = 1, user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?
         WHERE date = ? AND time = ?''',
-        (user_id, group_name, user_id, date, time))
+        (user_id, group_name, user_id, booking_type, comment, date, time))
     conn.commit()
     conn.close()
 
 def reset_user_state(chat_id):
-    keys_to_remove = [chat_id, f"{chat_id}_selected_day", f"{chat_id}_selected_time"]
-    for key in keys_to_remove:
-        user_states.pop(key, None)
+    keys = list(user_states.keys())
+    for key in keys:
+        if str(chat_id) in str(key):
+            user_states.pop(key, None)
 
-def create_schedule_grid_image():
+def create_schedule_grid_image(requester_id=None):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
     cursor.execute('SELECT DISTINCT date FROM slots ORDER BY date LIMIT 14')
@@ -122,18 +134,13 @@ def create_schedule_grid_image():
             y = padding + row_offset * (num_rows * (cell_height + padding))
 
             draw.rectangle([x, y, x + cell_width, y + cell_height], fill=(220, 220, 220))
-
             date_text = format_date(date)
             text_size = draw.textbbox((0, 0), date_text, font=date_font)
-            text_width = text_size[2] - text_size[0]
-            text_height = text_size[3] - text_size[1]
-            date_x = x + (cell_width - text_width) // 2
-            date_y = y + (cell_height - text_height) // 2
+            date_x = x + (cell_width - text_size[2]) // 2
+            date_y = y + (cell_height - text_size[3]) // 2
             draw.text((date_x, date_y), date_text, fill="black", font=date_font)
 
     for row_index in range(max_slots):
-        time_slot = schedules[dates[0]][row_index][0] if row_index < len(schedules[dates[0]]) else None
-
         for row_offset in range(2):
             for col, date in enumerate(dates[row_offset * 7:(row_offset + 1) * 7]):
                 schedule = schedules[date]
@@ -145,32 +152,28 @@ def create_schedule_grid_image():
                 else:
                     time, booked, group_name = "", 0, ""
 
-                bg_color = (255, 240, 200) if booked else (200, 255, 200)
+                bg_color = (255, 200, 200) if booked else (200, 255, 200)
                 draw.rectangle([x, y, x + cell_width, y + cell_height], fill=bg_color, outline="black", width=1)
 
-                time_text = time
                 time_x = x + padding
                 time_y = y + (cell_height - time_font_size) // 2
-                draw.text((time_x, time_y), time_text, fill="black", font=time_font)
+                draw.text((time_x, time_y), time, fill="black", font=time_font)
 
-                if group_name:
-                    group_x = x + cell_width // 4 + padding
-                    max_text_width = cell_width * 3 // 4 - 2 * padding
+                if booked:
+                    label = group_name if requester_id in ADMIN_IDS else "Занято"
                     fitted_font = group_font
-
                     while True:
-                        line_width = draw.textbbox((0, 0), group_name, font=fitted_font)[2]
-                        if line_width <= max_text_width or fitted_font.size <= 14:
+                        line_width = draw.textbbox((0, 0), label, font=fitted_font)[2]
+                        if line_width <= cell_width * 0.6 or fitted_font.size <= 14:
                             break
                         fitted_font = ImageFont.truetype(font_path, fitted_font.size - 1)
-
+                    group_x = x + cell_width // 4 + padding
                     group_y = y + (cell_height - fitted_font.size) // 2
-                    draw.text((group_x, group_y), group_name, fill="black", font=fitted_font)
+                    draw.text((group_x, group_y), label, fill="black", font=fitted_font)
 
     img_path = "schedule_grid.png"
     img.save(img_path, dpi=(300, 300))
     return img_path
-
 
 def show_main_menu(message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -192,7 +195,7 @@ def book_time(message):
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Посмотреть расписание")
 def view_schedule(message):
-    path = create_schedule_grid_image()
+    path = create_schedule_grid_image(message.chat.id)
     with open(path, "rb") as img:
         main_bot.send_photo(message.chat.id, img, caption="Расписание на ближайшие дни:")
     os.remove(path)
@@ -256,16 +259,51 @@ def handle_time_selection(message):
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_group_name')
 def handle_group_name_input(message):
     chat_id = message.chat.id
-    selected_day = user_states.get(f"{chat_id}_selected_day")
-    selected_time = user_states.get(f"{chat_id}_selected_time")
     group_name = message.text.strip()
     if not group_name or re.search(r"[;'\"]|^\s*/", group_name):
         main_bot.send_message(chat_id, "Некорректное название. Попробуйте снова.")
         return
-    book_slot(selected_day, selected_time, chat_id, group_name)
+    user_states[chat_id] = 'waiting_for_booking_type'
+    user_states[f"{chat_id}_group_name"] = group_name
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add("Репетиция", "Запись", "Другое")
+    main_bot.send_message(chat_id, "Выберите тип брони:", reply_markup=keyboard)
+
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_booking_type')
+def handle_booking_type_selection(message):
+    chat_id = message.chat.id
+    if message.text == "Другое":
+        main_bot.send_message(chat_id, "Введите тип брони:")
+        user_states[chat_id] = 'waiting_for_custom_booking_type'
+    else:
+        user_states[f"{chat_id}_booking_type"] = message.text.strip()
+        user_states[chat_id] = 'waiting_for_comment'
+        show_comment_prompt(chat_id)
+
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_custom_booking_type')
+def handle_custom_booking_type(message):
+    chat_id = message.chat.id
+    user_states[f"{chat_id}_booking_type"] = message.text.strip()
+    user_states[chat_id] = 'waiting_for_comment'
+    show_comment_prompt(chat_id)
+
+def show_comment_prompt(chat_id):
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add("Ок")
+    main_bot.send_message(chat_id, "Введите комментарий или нажмите 'Ок' для пропуска:", reply_markup=keyboard)
+
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_comment')
+def handle_comment_input(message):
+    chat_id = message.chat.id
+    comment = "" if message.text == "Ок" else message.text.strip()
+    selected_day = user_states.get(f"{chat_id}_selected_day")
+    selected_time = user_states.get(f"{chat_id}_selected_time")
+    group_name = user_states.get(f"{chat_id}_group_name")
+    booking_type = user_states.get(f"{chat_id}_booking_type")
+    book_slot(selected_day, selected_time, chat_id, group_name, booking_type, comment)
     main_bot.send_message(chat_id, f"Вы забронировали: {selected_day} {selected_time} - '{group_name}'", parse_mode='Markdown')
     mention = f"[{message.from_user.first_name}](tg://user?id={message.from_user.id})"
-    note = f"🔔 Новая бронь!\nДата: {selected_day}\nВремя: {selected_time}\nГруппа: {group_name}\nСоздатель: {mention}"
+    note = f"🔔 Новая бронь!\nДата: {selected_day}\nВремя: {selected_time}\nГруппа: {group_name}\nТип: {booking_type}\nКомментарий: {comment}\nСоздатель: {mention}"
     for admin_id in ADMIN_IDS:
         try:
             notifier_bot.send_message(admin_id, note, parse_mode='Markdown')
