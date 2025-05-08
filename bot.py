@@ -37,6 +37,7 @@ def init_db():
     add_column_if_not_exists("slots", "booking_type", "TEXT DEFAULT NULL")
     add_column_if_not_exists("slots", "comment", "TEXT DEFAULT NULL")
     add_column_if_not_exists("slots", "contact_info", "TEXT DEFAULT NULL")
+    add_column_if_not_exists("slots", "status", "INTEGER DEFAULT 0")
     cursor.execute('SELECT COUNT(*) FROM slots')
     if cursor.fetchone()[0] == 0:
         times = [f"{hour}:00" for hour in range(11, 24)]
@@ -86,7 +87,7 @@ def book_slots(date, start_time, hours, user_id, group_name, booking_type, comme
         time = f"{current_hour}:00"
         cursor.execute('''
             UPDATE slots 
-            SET booked = 1, user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?, contact_info = ?
+            SET booked = 1, user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?, contact_info = ?, status = 1
             WHERE date = ? AND time = ?''',
             (user_id, group_name, user_id, booking_type, comment, contact_info, date, time))
     conn.commit()
