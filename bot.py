@@ -36,6 +36,7 @@ def init_db():
     add_column_if_not_exists("slots", "subscribed_users", "TEXT DEFAULT NULL")
     add_column_if_not_exists("slots", "booking_type", "TEXT DEFAULT NULL")
     add_column_if_not_exists("slots", "comment", "TEXT DEFAULT NULL")
+    add_column_if_not_exists("slots", "contact_info", "TEXT DEFAULT NULL")
     cursor.execute('SELECT COUNT(*) FROM slots')
     if cursor.fetchone()[0] == 0:
         times = [f"{hour}:00" for hour in range(11, 24)]
@@ -74,7 +75,7 @@ def get_schedule_for_day(date, user_id=None):
     conn.close()
     return schedule
 
-def book_slots(date, start_time, hours, user_id, group_name, booking_type, comment):
+def book_slots(date, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
     start_hour = int(start_time.split(":")[0])
@@ -85,9 +86,9 @@ def book_slots(date, start_time, hours, user_id, group_name, booking_type, comme
         time = f"{current_hour}:00"
         cursor.execute('''
             UPDATE slots 
-            SET booked = 1, user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?
+            SET booked = 1, user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?, contact_info = ?
             WHERE date = ? AND time = ?''',
-            (user_id, group_name, user_id, booking_type, comment, date, time))
+            (user_id, group_name, user_id, booking_type, comment, contact_info, date, time))
     conn.commit()
     conn.close()
 
@@ -170,11 +171,24 @@ def create_schedule_grid_image(requester_id=None):
     img.save(img_path, dpi=(300, 300))
     return img_path
 
+@main_bot.message_handler(func=lambda msg: msg.text == "Посмотреть прайс")
+def show_price_list(message):
+    try:
+        with open('price.txt', 'r', encoding='utf-8') as file:
+            price_list = file.read().strip()
+    except FileNotFoundError:
+        price_list = "Извините, информация о прайсе временно недоступна."
+    
+    main_bot.send_message(message.chat.id, price_list)
+    reset_user_state(message.chat.id)
+    show_main_menu(message)
+
 def show_main_menu(message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Забронировать время"))
     keyboard.add(types.KeyboardButton("Посмотреть расписание"))
     keyboard.add(types.KeyboardButton("Отменить бронь"))
+    keyboard.add(types.KeyboardButton("Посмотреть прайс"))
     main_bot.send_message(message.chat.id, "Выберите действие:", reply_markup=keyboard)
     reset_user_state(message.chat.id)
 
@@ -293,8 +307,20 @@ def handle_group_name_input(message):
     if not group_name or re.search(r"[;'\"]|^\s*/", group_name):
         main_bot.send_message(chat_id, "Некорректное название. Попробуйте снова.")
         return
-    user_states[chat_id] = 'waiting_for_booking_type'
+    user_states[chat_id] = 'waiting_for_contact'
     user_states[f"{chat_id}_group_name"] = group_name
+    main_bot.send_message(chat_id, "Введите ваш номер телефона или другой контакт:")
+
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_contact')
+def handle_contact_input(message):
+    chat_id = message.chat.id
+    contact_info = message.text.strip()
+    if not contact_info:
+        main_bot.send_message(chat_id, "Контактная информация обязательна. Попробуйте снова.")
+        return
+    user_states[f"{chat_id}_contact_info"] = contact_info
+    user_states[chat_id] = 'waiting_for_booking_type'
+    
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add("Репетиция", "Запись", "Другое")
     main_bot.send_message(chat_id, "Выберите тип брони:", reply_markup=keyboard)
@@ -331,18 +357,22 @@ def handle_comment_input(message):
     hours = user_states.get(f"{chat_id}_hours")
     group_name = user_states.get(f"{chat_id}_group_name")
     booking_type = user_states.get(f"{chat_id}_booking_type")
+    contact_info = user_states.get(f"{chat_id}_contact_info")
     start_hour = int(selected_time.split(":")[0])
     end_hour = start_hour + hours
     end_time = f"{end_hour}:00"
-    book_slots(selected_day, selected_time, hours, chat_id, group_name, booking_type, comment)
+    book_slots(selected_day, selected_time, hours, chat_id, group_name, booking_type, comment, contact_info)
     main_bot.send_message(chat_id, f"Вы забронировали: {selected_day} {selected_time}-{end_time} - '{group_name}'", parse_mode='Markdown')
+    
     mention = f"[{message.from_user.first_name}](tg://user?id={message.from_user.id})"
-    note = f"🔔 Новая бронь!\nДата: {selected_day}\nВремя: {selected_time}-{end_time}\nГруппа: {group_name}\nТип: {booking_type}\nКомментарий: {comment}\nСоздатель: {mention}"
+    note = f"🔔 Новая бронь!\nДата: {selected_day}\nВремя: {selected_time}-{end_time}\nГруппа: {group_name}\nТип: {booking_type}\nКомментарий: {comment}\nКонтакт: {contact_info}\nСоздатель: {mention}"
+    
     for admin_id in ADMIN_IDS:
         try:
             notifier_bot.send_message(admin_id, note, parse_mode='Markdown')
         except:
             pass
+    
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Забронировать другое время"))
     keyboard.add(types.KeyboardButton("Вернуться на главную"))
