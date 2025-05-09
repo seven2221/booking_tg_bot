@@ -5,12 +5,14 @@ from datetime import datetime, timedelta
 import telebot
 from dotenv import load_dotenv
 from telebot import types
+
 from utils import is_admin, reset_user_state
 from schedule_generator import create_schedule_grid_image
 
 load_dotenv()
 
 user_states = {}
+admin_states = {}
 
 ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 MAIN_BOT_TOKEN = os.getenv("MAIN_BOT_TOKEN")
@@ -91,7 +93,15 @@ def confirm_booking(booking_ids):
 def reject_booking(booking_ids):
     with sqlite3.connect('bookings.db') as conn:
         cursor = conn.cursor()
-        query = 'UPDATE slots SET status = 3 WHERE id IN ({})'.format(','.join('?' * len(booking_ids)))
+        query = '''UPDATE slots SET 
+                    user_id = NULL, 
+                    group_name = NULL, 
+                    created_by = NULL, 
+                    booking_type = NULL, 
+                    comment = NULL, 
+                    contact_info = NULL, 
+                    status = 0 
+                  WHERE id IN ({})'''.format(','.join('?' * len(booking_ids)))
         cursor.execute(query, booking_ids)
         conn.commit()
 
@@ -162,19 +172,8 @@ def handle_view_unconfirmed(message):
 
     show_menu(message.chat.id)
 
-
 @admin_bot.callback_query_handler(func=lambda call: ':' in call.data)
 def handle_callback_query(call):
-    admin_id = call.from_user.id
-    if not is_admin(admin_id):
-        admin_bot.answer_callback_query(call.id, "❌ У вас нет прав.")
-        return
-
-    state = user_states.get(admin_id)
-    if state != 'awaiting_confirmation_action':
-        admin_bot.answer_callback_query(call.id, "❌ Сессия истекла или действие недопустимо.")
-        return
-
     try:
         action, booking_ids_str, user_id_str = call.data.split(":")
         booking_ids = list(map(int, booking_ids_str.split(',')))
@@ -237,11 +236,6 @@ def handle_callback_query(call):
                                             reply_markup=None)
     except Exception as e:
         print(f"[Error] Не удалось удалить клавиатуру: {e}")
-
-    # reset_user_state(admin_id, user_states)
-
-    show_menu(call.message.chat.id)
-
 
 if __name__ == "__main__":
     admin_bot.polling(none_stop=True)
