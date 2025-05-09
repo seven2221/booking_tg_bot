@@ -3,6 +3,7 @@ import sqlite3
 
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 load_dotenv()
 
@@ -138,3 +139,96 @@ def format_booking_info(group):
            f"Время: {start_time}–{end_time}\n"\
            f"Группа: {group['group_name']}\n"\
            f"Контакт: @{group['user_id']}"
+           
+def update_booking_status(date, time, status):
+    conn = sqlite3.connect('bookings.db', check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE slots 
+        SET status = ?
+        WHERE date = ? AND time = ?
+    ''', (status, date, time))
+    conn.commit()
+    conn.close()
+    
+def get_free_days():
+    conn = sqlite3.connect('bookings.db', check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('SELECT DISTINCT date FROM slots WHERE status = 0 ORDER BY date')
+    free_days = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return free_days
+
+def book_slots(date, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
+    conn = sqlite3.connect('bookings.db', check_same_thread=False)
+    cursor = conn.cursor()
+    start_hour = int(start_time.split(":")[0])
+    for i in range(hours):
+        current_hour = start_hour + i
+        if current_hour >= 24:
+            break
+        time = f"{current_hour}:00"
+        cursor.execute('''
+            UPDATE slots 
+            SET user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?, contact_info = ?, status = 1
+            WHERE date = ? AND time = ?''',
+            (user_id, group_name, user_id, booking_type, comment, contact_info, date, time))
+    conn.commit()
+    conn.close()
+    
+def create_confirmation_keyboard(selected_day, selected_time):
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT id, created_by, time 
+        FROM slots 
+        WHERE date = ? AND time >= ?
+        ORDER BY time
+    ''', (selected_day, selected_time))
+    rows = cursor.fetchall()
+    conn.close()
+    if not rows:
+        return None
+    bookings = []
+    for row in rows:
+        bid, user_id, time_str = row
+        try:
+            dt = datetime.strptime(f"{selected_day} {time_str}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        bookings.append({'id': bid, 'datetime': dt, 'time': time_str, 'user_id': user_id})
+    grouped = []
+    current_group = None
+    for booking in bookings:
+        if not current_group:
+            current_group = {
+                'start_time': booking['datetime'],
+                'end_time': booking['datetime'] + timedelta(hours=1),
+                'ids': [booking['id']],
+                'user_id': booking['user_id']
+            }
+        else:
+            if booking['user_id'] == current_group['user_id'] and booking['datetime'] == current_group['end_time']:
+                current_group['end_time'] += timedelta(hours=1)
+                current_group['ids'].append(booking['id'])
+            else:
+                grouped.append(current_group)
+                current_group = {
+                    'start_time': booking['datetime'],
+                    'end_time': booking['datetime'] + timedelta(hours=1),
+                    'ids': [booking['id']],
+                    'user_id': booking['user_id']
+                }
+    if current_group:
+        grouped.append(current_group)
+    if not grouped:
+        return None
+    group = grouped[0]
+    booking_ids = group['ids']
+    user_id = group['user_id']
+    keyboard = InlineKeyboardMarkup()
+    keyboard.row(
+        InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{','.join(map(str, booking_ids))}:{user_id}"),
+        InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{','.join(map(str, booking_ids))}:{user_id}")
+    )
+    return keyboard

@@ -9,7 +9,8 @@ from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from schedule_generator import create_schedule_grid_image
-from utils import is_admin, reset_user_state, format_date, get_schedule_for_day, get_hour_word
+from utils import is_admin, reset_user_state, format_date, get_schedule_for_day, get_hour_word, update_booking_status, get_free_days, book_slots, create_confirmation_keyboard
+from db import init_db
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
@@ -22,137 +23,6 @@ main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 
 user_states = {}
-
-def init_db():
-    conn = sqlite3.connect('bookings.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS slots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            time TEXT NOT NULL
-        )
-    ''')
-    
-    def add_column_if_not_exists(table_name, column_name, column_definition):
-        cursor.execute(f"PRAGMA table_info({table_name})")
-        columns = [column[1] for column in cursor.fetchall()]
-        if column_name not in columns:
-            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
-
-    add_column_if_not_exists("slots", "user_id", "INTEGER DEFAULT NULL")
-    add_column_if_not_exists("slots", "group_name", "TEXT DEFAULT NULL")
-    add_column_if_not_exists("slots", "created_by", "INTEGER DEFAULT NULL")
-    add_column_if_not_exists("slots", "subscribed_users", "TEXT DEFAULT NULL")
-    add_column_if_not_exists("slots", "booking_type", "TEXT DEFAULT NULL")
-    add_column_if_not_exists("slots", "comment", "TEXT DEFAULT NULL")
-    add_column_if_not_exists("slots", "contact_info", "TEXT DEFAULT NULL")
-    add_column_if_not_exists("slots", "status", "INTEGER DEFAULT 0")
-
-    cursor.execute('SELECT COUNT(*) FROM slots')
-    if cursor.fetchone()[0] == 0:
-        times = [f"{hour}:00" for hour in range(11, 24)]
-        today = datetime.now()
-        for i in range(30):
-            date = (today + timedelta(days=i)).strftime('%Y-%m-%d')
-            for time in times:
-                cursor.execute('INSERT INTO slots (date, time, status) VALUES (?, ?, ?)', (date, time, 0))
-    
-    conn.commit()
-    conn.close()
-
-def update_booking_status(date, time, status):
-    conn = sqlite3.connect('bookings.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('''
-        UPDATE slots 
-        SET status = ?
-        WHERE date = ? AND time = ?
-    ''', (status, date, time))
-    conn.commit()
-    conn.close()
-
-def get_free_days():
-    conn = sqlite3.connect('bookings.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('SELECT DISTINCT date FROM slots WHERE status = 0 ORDER BY date')
-    free_days = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return free_days
-
-def book_slots(date, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
-    conn = sqlite3.connect('bookings.db', check_same_thread=False)
-    cursor = conn.cursor()
-    start_hour = int(start_time.split(":")[0])
-    for i in range(hours):
-        current_hour = start_hour + i
-        if current_hour >= 24:
-            break
-        time = f"{current_hour}:00"
-        cursor.execute('''
-            UPDATE slots 
-            SET user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?, contact_info = ?, status = 1
-            WHERE date = ? AND time = ?''',
-            (user_id, group_name, user_id, booking_type, comment, contact_info, date, time))
-    conn.commit()
-    conn.close()
-
-def create_confirmation_keyboard(selected_day, selected_time):
-    conn = sqlite3.connect('bookings.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT id, created_by, time 
-        FROM slots 
-        WHERE date = ? AND time >= ?
-        ORDER BY time
-    ''', (selected_day, selected_time))
-    rows = cursor.fetchall()
-    conn.close()
-    if not rows:
-        return None
-    bookings = []
-    for row in rows:
-        bid, user_id, time_str = row
-        try:
-            dt = datetime.strptime(f"{selected_day} {time_str}", "%Y-%m-%d %H:%M")
-        except ValueError:
-            continue
-        bookings.append({'id': bid, 'datetime': dt, 'time': time_str, 'user_id': user_id})
-    grouped = []
-    current_group = None
-    for booking in bookings:
-        if not current_group:
-            current_group = {
-                'start_time': booking['datetime'],
-                'end_time': booking['datetime'] + timedelta(hours=1),
-                'ids': [booking['id']],
-                'user_id': booking['user_id']
-            }
-        else:
-            if booking['user_id'] == current_group['user_id'] and booking['datetime'] == current_group['end_time']:
-                current_group['end_time'] += timedelta(hours=1)
-                current_group['ids'].append(booking['id'])
-            else:
-                grouped.append(current_group)
-                current_group = {
-                    'start_time': booking['datetime'],
-                    'end_time': booking['datetime'] + timedelta(hours=1),
-                    'ids': [booking['id']],
-                    'user_id': booking['user_id']
-                }
-    if current_group:
-        grouped.append(current_group)
-    if not grouped:
-        return None
-    group = grouped[0]
-    booking_ids = group['ids']
-    user_id = group['user_id']
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(
-        InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{','.join(map(str, booking_ids))}:{user_id}"),
-        InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{','.join(map(str, booking_ids))}:{user_id}")
-    )
-    return keyboard
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Посмотреть прайс")
 def show_price_list(message):
@@ -342,7 +212,7 @@ def handle_comment_input(message):
         formatted_date = date_obj.strftime("%d.%m.%Y")
     except ValueError:
         formatted_date = selected_day 
-    main_bot.send_message(chat_id, f"Спасибо! 👍\nВы забронировали {hours} {get_hour_word(hours)} с {selected_time} по {end_time} {formatted_date}\n'{group_name}'\nПожалуйста, ожидайте подтверждения брони администратором.", parse_mode='Markdown')
+    main_bot.send_message(chat_id, f"Спасибо! 👍\nВы забронировали {hours} {get_hour_word(hours)} с {selected_time} по {end_time} {formatted_date}\nГруппа: {group_name}\nПожалуйста, ожидайте подтверждения брони администратором.", parse_mode='Markdown')
     mention = f"[{message.from_user.first_name}](tg://user?id={message.from_user.id})"
     note = f"🔔 Новая бронь!\nДата: {selected_day}\nВремя: {selected_time}-{end_time}\nГруппа: {group_name}\nТип: {booking_type}\nКомментарий: {comment}\nКонтакт: {contact_info}\nСоздатель: {mention}"
     for admin_id in ADMIN_IDS:
