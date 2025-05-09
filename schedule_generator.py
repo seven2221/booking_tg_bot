@@ -15,7 +15,10 @@ def create_schedule_grid_image(requester_id=None):
         return None
 
     schedules = {
-        date: get_schedule_for_day(date, requester_id)
+        date: [
+            (t, s, g) for t, s, g in get_schedule_for_day(date, requester_id)
+            if "11:00" <= t < "23:00"
+        ]
         for date in dates
     }
 

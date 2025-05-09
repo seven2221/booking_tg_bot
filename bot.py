@@ -10,7 +10,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from schedule_generator import create_schedule_grid_image
 from utils import is_admin, reset_user_state, format_date, get_schedule_for_day, get_hour_word, update_booking_status, get_free_days, book_slots, create_confirmation_keyboard
-from db import init_db
+from db_init import init_db
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv()

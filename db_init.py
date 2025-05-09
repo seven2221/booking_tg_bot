@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta
 
 def init_db():
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
@@ -10,7 +11,7 @@ def init_db():
             time TEXT NOT NULL
         )
     ''')
-    
+
     def add_column_if_not_exists(table_name, column_name, column_definition):
         cursor.execute(f"PRAGMA table_info({table_name})")
         columns = [column[1] for column in cursor.fetchall()]
@@ -28,12 +29,16 @@ def init_db():
 
     cursor.execute('SELECT COUNT(*) FROM slots')
     if cursor.fetchone()[0] == 0:
-        times = [f"{hour}:00" for hour in range(11, 24)]
-        today = datetime.now()
-        for i in range(30):
+        times = [f"{hour:02d}:00" for hour in range(0, 24)]
+        today = datetime.now().date()
+
+        for i in range(28):
             date = (today + timedelta(days=i)).strftime('%Y-%m-%d')
             for time in times:
-                cursor.execute('INSERT INTO slots (date, time, status) VALUES (?, ?, ?)', (date, time, 0))
-    
+                cursor.execute(
+                    'INSERT INTO slots (date, time, status) VALUES (?, ?, ?)', 
+                    (date, time, 0)
+                )
+
     conn.commit()
     conn.close()
