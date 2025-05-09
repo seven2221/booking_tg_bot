@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import telebot
 from dotenv import load_dotenv
 from telebot import types
+from utils import is_admin
 
 load_dotenv()
 
@@ -94,7 +95,12 @@ def reject_booking(booking_ids):
 def format_booking_info(group):
     start_time = group['start_time'].strftime("%H:%M")
     end_time = group['end_time'].strftime("%H:%M")
-    return f"ID: {','.join(map(str, group['ids']))} | {group['date_str']} | {start_time}-{end_time} | {group['group_name']}"
+    date_str = datetime.strptime(group['date_str'], "%Y-%m-%d").strftime("%d.%m.%Y")
+
+    return f"Дата: {date_str}\n"\
+           f"Время: {start_time}–{end_time}\n"\
+           f"Группа: {group['group_name']}\n"\
+           f"Контакт: @{group['user_id']}"
 
 
 def show_admin_menu(chat_id):
@@ -105,7 +111,7 @@ def show_admin_menu(chat_id):
 
 @admin_bot.message_handler(commands=['start'])
 def handle_start(message):
-    if message.from_user.id not in ADMIN_IDS:
+    if not is_admin(message.from_user.id):
         admin_bot.send_message(message.chat.id, "❌ У вас нет прав для использования этого бота.")
         return
     admin_bot.set_my_commands([telebot.types.BotCommand("/start", "Главное меню")])
@@ -114,7 +120,7 @@ def handle_start(message):
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "Просмотреть неподтвержденные брони")
 def handle_view_unconfirmed(message):
-    if message.from_user.id not in ADMIN_IDS:
+    if not is_admin(message.from_user.id):
         admin_bot.send_message(message.chat.id, "❌ У вас нет прав для выполнения этой операции.")
         return
 
@@ -128,21 +134,16 @@ def handle_view_unconfirmed(message):
         info = format_booking_info(group)
         ids = group['ids']
         user_id = group['user_id']
+
         markup = types.InlineKeyboardMarkup()
         confirm_btn = types.InlineKeyboardButton("✅ Подтвердить",
                                                  callback_data=f"confirm:{','.join(map(str, ids))}:{user_id}")
         reject_btn = types.InlineKeyboardButton("❌ Отклонить",
                                                 callback_data=f"reject:{','.join(map(str, ids))}:{user_id}")
         markup.add(confirm_btn, reject_btn)
+
         admin_bot.send_message(message.chat.id, info, reply_markup=markup)
 
-    markup_back = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup_back.add(types.KeyboardButton("Вернуться в меню"))
-    admin_bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup_back)
-
-
-@admin_bot.message_handler(func=lambda msg: msg.text == "Вернуться в меню")
-def handle_back_to_menu(message):
     show_admin_menu(message.chat.id)
 
 
@@ -185,7 +186,7 @@ def handle_callback_query(call):
         print(f"[Error] Не удалось получить информацию о брони: {e}")
         confirmation_message = "✅ Ваша бронь подтверждена. Скоро мы свяжемся с вами для уточнения деталей."
     else:
-        confirmation_message = f"✅ Ваша бронь подтверждена, ожидаем вас  {formatted_date} с {start_time} до {end_time} по адресу проспект Труда, 111А."
+        confirmation_message = f"✅ Ваша бронь подтверждена!\nОжидаем вас  {formatted_date} с {start_time} до {end_time} по адресу проспект Труда, 111А."
 
     if action == "confirm":
         confirm_booking(booking_ids)
@@ -211,14 +212,7 @@ def handle_callback_query(call):
     except Exception as e:
         print(f"[Error] Не удалось удалить клавиатуру: {e}")
 
-    admin_bot.send_message(call.message.chat.id, "Выберите действие:", reply_markup=get_continue_markup())
-
-
-def get_continue_markup():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add(types.KeyboardButton("Просмотреть неподтвержденные брони"))
-    markup.add(types.KeyboardButton("Вернуться в меню"))
-    return markup
+    show_admin_menu(call.message.chat.id)
 
 
 if __name__ == "__main__":

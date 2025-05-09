@@ -3,11 +3,12 @@ import re
 import sqlite3
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from PIL import Image, ImageDraw, ImageFont
 import telebot
 from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import logging
+from schedule_generator import create_schedule_grid_image
+from utils import is_admin, format_date, get_schedule_for_day
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
@@ -18,6 +19,7 @@ ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 
 main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
+
 user_states = {}
 
 def init_db():
@@ -30,14 +32,13 @@ def init_db():
             time TEXT NOT NULL
         )
     ''')
-
+    
     def add_column_if_not_exists(table_name, column_name, column_definition):
         cursor.execute(f"PRAGMA table_info({table_name})")
         columns = [column[1] for column in cursor.fetchall()]
         if column_name not in columns:
             cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
 
-    add_column_if_not_exists("slots", "booked", "INTEGER DEFAULT 0")
     add_column_if_not_exists("slots", "user_id", "INTEGER DEFAULT NULL")
     add_column_if_not_exists("slots", "group_name", "TEXT DEFAULT NULL")
     add_column_if_not_exists("slots", "created_by", "INTEGER DEFAULT NULL")
@@ -54,7 +55,8 @@ def init_db():
         for i in range(30):
             date = (today + timedelta(days=i)).strftime('%Y-%m-%d')
             for time in times:
-                cursor.execute('INSERT INTO slots (date, time, booked) VALUES (?, ?, ?)', (date, time, 0))
+                cursor.execute('INSERT INTO slots (date, time, status) VALUES (?, ?, ?)', (date, time, 0))
+    
     conn.commit()
     conn.close()
 
@@ -72,29 +74,10 @@ def update_booking_status(date, time, status):
 def get_free_days():
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute('SELECT DISTINCT date FROM slots WHERE booked = 0 ORDER BY date')
+    cursor.execute('SELECT DISTINCT date FROM slots WHERE status = 0 ORDER BY date')
     free_days = [row[0] for row in cursor.fetchall()]
     conn.close()
     return free_days
-
-def format_date(date_str):
-    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-    weekdays = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
-    return f"{date_obj.strftime('%d.%m')} {weekdays[date_obj.weekday()]}"
-
-def get_schedule_for_day(date, user_id=None):
-    conn = sqlite3.connect('bookings.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('SELECT time, booked, group_name FROM slots WHERE date = ? ORDER BY time', (date,))
-    schedule = []
-    for row in cursor.fetchall():
-        time, booked, group_name = row
-        if booked and user_id not in ADMIN_IDS:
-            schedule.append((time, booked, "Занято"))
-        else:
-            schedule.append((time, booked, group_name))
-    conn.close()
-    return schedule
 
 def book_slots(date, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
@@ -107,7 +90,7 @@ def book_slots(date, start_time, hours, user_id, group_name, booking_type, comme
         time = f"{current_hour}:00"
         cursor.execute('''
             UPDATE slots 
-            SET booked = 1, user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?, contact_info = ?, status = 1
+            SET user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?, contact_info = ?, status = 1
             WHERE date = ? AND time = ?''',
             (user_id, group_name, user_id, booking_type, comment, contact_info, date, time))
     conn.commit()
@@ -132,7 +115,6 @@ def create_confirmation_keyboard(selected_day, selected_time):
     conn.close()
     if not rows:
         return None
-
     bookings = []
     for row in rows:
         bid, user_id, time_str = row
@@ -141,7 +123,6 @@ def create_confirmation_keyboard(selected_day, selected_time):
         except ValueError:
             continue
         bookings.append({'id': bid, 'datetime': dt, 'time': time_str, 'user_id': user_id})
-
     grouped = []
     current_group = None
     for booking in bookings:
@@ -166,119 +147,17 @@ def create_confirmation_keyboard(selected_day, selected_time):
                 }
     if current_group:
         grouped.append(current_group)
-
     if not grouped:
         return None
-
     group = grouped[0]
     booking_ids = group['ids']
     user_id = group['user_id']
-
     keyboard = InlineKeyboardMarkup()
     keyboard.row(
         InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{','.join(map(str, booking_ids))}:{user_id}"),
         InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{','.join(map(str, booking_ids))}:{user_id}")
     )
     return keyboard
-
-def create_schedule_grid_image(requester_id=None):
-    conn = sqlite3.connect('bookings.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('SELECT DISTINCT date FROM slots ORDER BY date LIMIT 14')
-    dates = [row[0] for row in cursor.fetchall()]
-    conn.close()
-
-    if not dates:
-        return None
-
-    schedules = {
-        date: get_schedule_for_day(date, requester_id)
-        for date in dates
-    }
-
-    max_slots = max(len(slots) for slots in schedules.values()) if schedules else 1
-    cell_width, cell_height, padding = 450, 70, 10
-
-    try:
-        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        bold_font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        time_font = ImageFont.truetype(bold_font_path, 26)
-        group_font = ImageFont.truetype(font_path, 24)
-        date_font = ImageFont.truetype(bold_font_path, 32)
-    except OSError:
-        time_font = group_font = date_font = ImageFont.load_default()
-
-    img_width = 7 * (cell_width + padding) + padding
-    img_height = 2 * ((max_slots + 1) * (cell_height + padding)) + padding
-    img = Image.new("RGB", (img_width, img_height), color="white")
-    draw = ImageDraw.Draw(img)
-
-    for row_offset in range(2):
-        for col, date in enumerate(dates[row_offset*7:(row_offset+1)*7]):
-            x = padding + col * (cell_width + padding)
-            y = padding + row_offset * ((max_slots + 1) * (cell_height + padding))
-            draw.rectangle([x, y, x + cell_width, y + cell_height], fill=(220, 220, 220))
-            formatted_date = format_date(date)
-            bbox = draw.textbbox((0, 0), formatted_date, font=date_font)
-            tx = x + (cell_width - bbox[2]) // 2
-            ty = y + (cell_height - bbox[3]) // 2
-            draw.text((tx, ty), formatted_date, fill="black", font=date_font)
-
-    for row_index in range(max_slots):
-        for row_offset in range(2):
-            for col, date in enumerate(dates[row_offset*7:(row_offset+1)*7]):
-                x = padding + col * (cell_width + padding)
-                y = padding + row_offset * ((max_slots + 1) * (cell_height + padding)) + (row_index + 1) * (cell_height + padding)
-                try:
-                    time, booked, group_name = schedules[date][row_index]
-                except IndexError:
-                    time, booked, group_name = "", 0, ""
-                is_admin = requester_id in ADMIN_IDS if requester_id is not None else False
-                if booked:
-                    if is_admin:
-                        if group_name == "Занято":
-                            bg_color = (255, 200, 200)
-                        else:
-                            cursor = sqlite3.connect('bookings.db').cursor()
-                            cursor.execute('SELECT status FROM slots WHERE date = ? AND time = ?', (date, time))
-                            status = cursor.fetchone()[0]
-                            cursor.close()
-                            if status == 2:
-                                bg_color = (255, 180, 180)
-                            elif status == 1:
-                                bg_color = (255, 200, 150)
-                            else:
-                                bg_color = (255, 200, 200)
-                    else:
-                        bg_color = (255, 180, 180)
-                else:
-                    bg_color = (200, 255, 200)
-
-                draw.rectangle([x, y, x + cell_width, y + cell_height], fill=bg_color, outline="black")
-
-                draw.text((x + padding, y + (cell_height - 26) // 2), time, fill="black", font=time_font)
-
-                if booked:
-                    if is_admin:
-                        label = group_name
-                    else:
-                        label = "Занято"
-                    fitted_font = group_font
-                    while True:
-                        line_width = draw.textbbox((0, 0), label, font=fitted_font)[2]
-                        if line_width <= cell_width * 0.6 or fitted_font.size <= 14:
-                            break
-                        fitted_font = ImageFont.truetype(font_path, fitted_font.size - 1)
-                    draw.text(
-                        (x + cell_width // 4 + padding, y + (cell_height - fitted_font.size) // 2),
-                        label,
-                        fill="black",
-                        font=fitted_font
-                    )
-
-    path = "schedule_grid.png"
-    img.save(path, dpi=(300, 300))
-    return path
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Посмотреть прайс")
 def show_price_list(message):
@@ -463,19 +342,15 @@ def handle_comment_input(message):
     start_hour = int(selected_time.split(":")[0])
     end_hour = start_hour + hours
     end_time = f"{end_hour}:00"
-
     book_slots(selected_day, selected_time, hours, chat_id, group_name, booking_type, comment, contact_info)
     main_bot.send_message(chat_id, f"Вы забронировали: {selected_day} {selected_time}-{end_time} - '{group_name}'", parse_mode='Markdown')
-
     mention = f"[{message.from_user.first_name}](tg://user?id={message.from_user.id})"
     note = f"🔔 Новая бронь!\nДата: {selected_day}\nВремя: {selected_time}-{end_time}\nГруппа: {group_name}\nТип: {booking_type}\nКомментарий: {comment}\nКонтакт: {contact_info}\nСоздатель: {mention}"
-
     for admin_id in ADMIN_IDS:
         try:
             admin_bot.send_message(admin_id, note, parse_mode='Markdown', reply_markup=create_confirmation_keyboard(selected_day, selected_time))
         except Exception as e:
             print(f"[Error] Can't send message to admin {admin_id}: {e}")
-
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Забронировать другое время"))
     keyboard.add(types.KeyboardButton("Вернуться на главную"))
