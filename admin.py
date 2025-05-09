@@ -1,12 +1,16 @@
 import os
+import time
 import sqlite3
 from datetime import datetime, timedelta
 import telebot
 from dotenv import load_dotenv
 from telebot import types
-from utils import is_admin
+from utils import is_admin, reset_user_state
+from schedule_generator import create_schedule_grid_image
 
 load_dotenv()
+
+user_states = {}
 
 ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 MAIN_BOT_TOKEN = os.getenv("MAIN_BOT_TOKEN")
@@ -103,9 +107,10 @@ def format_booking_info(group):
            f"Контакт: @{group['user_id']}"
 
 
-def show_admin_menu(chat_id):
+def show_menu(chat_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("Просмотреть неподтвержденные брони"))
+    markup.add(types.KeyboardButton("Посмотреть расписание"))
     admin_bot.send_message(chat_id, "Админ-меню:", reply_markup=markup)
 
 
@@ -115,20 +120,31 @@ def handle_start(message):
         admin_bot.send_message(message.chat.id, "❌ У вас нет прав для использования этого бота.")
         return
     admin_bot.set_my_commands([telebot.types.BotCommand("/start", "Главное меню")])
-    show_admin_menu(message.chat.id)
+    show_menu(message.chat.id)
 
+@admin_bot.message_handler(func=lambda msg: msg.text == "Посмотреть расписание")
+def view_schedule(message):
+    path = create_schedule_grid_image(message.chat.id)
+    with open(path, "rb") as img:
+        admin_bot.send_photo(message.chat.id, img, caption="Расписание на ближайшие дни:")
+    os.remove(path)
+    reset_user_state(message.chat.id, user_states)
+    show_menu(message)
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "Просмотреть неподтвержденные брони")
 def handle_view_unconfirmed(message):
-    if not is_admin(message.from_user.id):
+    admin_id = message.from_user.id
+    if not is_admin(admin_id):
         admin_bot.send_message(message.chat.id, "❌ У вас нет прав для выполнения этой операции.")
         return
 
     groups = get_grouped_unconfirmed_bookings()
     if not groups:
         admin_bot.send_message(message.chat.id, "Нет неподтвержденных броней.")
-        show_admin_menu(message.chat.id)
+        show_menu(message.chat.id)
         return
+
+    user_states[admin_id] = 'awaiting_confirmation_action'
 
     for group in groups:
         info = format_booking_info(group)
@@ -144,11 +160,21 @@ def handle_view_unconfirmed(message):
 
         admin_bot.send_message(message.chat.id, info, reply_markup=markup)
 
-    show_admin_menu(message.chat.id)
+    show_menu(message.chat.id)
 
 
 @admin_bot.callback_query_handler(func=lambda call: ':' in call.data)
 def handle_callback_query(call):
+    admin_id = call.from_user.id
+    if not is_admin(admin_id):
+        admin_bot.answer_callback_query(call.id, "❌ У вас нет прав.")
+        return
+
+    state = user_states.get(admin_id)
+    if state != 'awaiting_confirmation_action':
+        admin_bot.answer_callback_query(call.id, "❌ Сессия истекла или действие недопустимо.")
+        return
+
     try:
         action, booking_ids_str, user_id_str = call.data.split(":")
         booking_ids = list(map(int, booking_ids_str.split(',')))
@@ -212,7 +238,9 @@ def handle_callback_query(call):
     except Exception as e:
         print(f"[Error] Не удалось удалить клавиатуру: {e}")
 
-    show_admin_menu(call.message.chat.id)
+    # reset_user_state(admin_id, user_states)
+
+    show_menu(call.message.chat.id)
 
 
 if __name__ == "__main__":

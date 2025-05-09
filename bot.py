@@ -8,7 +8,7 @@ from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import logging
 from schedule_generator import create_schedule_grid_image
-from utils import is_admin, format_date, get_schedule_for_day
+from utils import is_admin, reset_user_state, format_date, get_schedule_for_day
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
@@ -96,12 +96,6 @@ def book_slots(date, start_time, hours, user_id, group_name, booking_type, comme
     conn.commit()
     conn.close()
 
-def reset_user_state(chat_id):
-    keys = list(user_states.keys())
-    for key in keys:
-        if str(chat_id) in str(key):
-            user_states.pop(key, None)
-
 def create_confirmation_keyboard(selected_day, selected_time):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
@@ -167,26 +161,26 @@ def show_price_list(message):
     except FileNotFoundError:
         price_list = "Информация о прайсе временно недоступна."
     main_bot.send_message(message.chat.id, price_list)
-    reset_user_state(message.chat.id)
-    show_main_menu(message)
+    reset_user_state(message.chat.id, user_states)
+    show_menu(message)
 
-def show_main_menu(message):
+def show_menu(message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Забронировать время"))
     keyboard.add(types.KeyboardButton("Посмотреть расписание"))
     keyboard.add(types.KeyboardButton("Отменить бронь"))
     keyboard.add(types.KeyboardButton("Посмотреть прайс"))
     main_bot.send_message(message.chat.id, "Выберите действие:", reply_markup=keyboard)
-    reset_user_state(message.chat.id)
+    reset_user_state(message.chat.id, user_states)
 
 @main_bot.message_handler(commands=['start'])
 def start(message):
     main_bot.set_my_commands([telebot.types.BotCommand("/start", "Главное меню")])
-    show_main_menu(message)
+    show_menu(message)
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Забронировать время")
 def book_time(message):
-    reset_user_state(message.chat.id)
+    reset_user_state(message.chat.id, user_states)
     show_free_days(message)
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Посмотреть расписание")
@@ -195,14 +189,14 @@ def view_schedule(message):
     with open(path, "rb") as img:
         main_bot.send_photo(message.chat.id, img, caption="Расписание на ближайшие дни:")
     os.remove(path)
-    reset_user_state(message.chat.id)
-    show_main_menu(message)
+    reset_user_state(message.chat.id, user_states)
+    show_menu(message)
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Отменить бронь")
 def cancel_booking(message):
     main_bot.send_message(message.chat.id, "Функция отмены временно недоступна. Обратитесь к @admin_nora")
-    reset_user_state(message.chat.id)
-    show_main_menu(message)
+    reset_user_state(message.chat.id, user_states)
+    show_menu(message)
 
 def show_free_days(message):
     free_days = get_free_days()
@@ -241,7 +235,7 @@ def handle_time_selection(message):
     chat_id = message.chat.id
     selected_day = user_states.get(f"{chat_id}_selected_day")
     if message.text == "Выбрать другой день":
-        reset_user_state(chat_id)
+        reset_user_state(chat_id, user_states)
         show_free_days(message)
         return
     selected_time = message.text.strip()
@@ -355,17 +349,17 @@ def handle_comment_input(message):
     keyboard.add(types.KeyboardButton("Забронировать другое время"))
     keyboard.add(types.KeyboardButton("Вернуться на главную"))
     main_bot.send_message(chat_id, "Что дальше?", reply_markup=keyboard)
-    reset_user_state(chat_id)
+    reset_user_state(chat_id, user_states)
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Забронировать другое время")
 def book_another_time(message):
-    reset_user_state(message.chat.id)
+    reset_user_state(message.chat.id, user_states)
     show_free_days(message)
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Вернуться на главную")
 def return_to_main_menu(message):
-    reset_user_state(message.chat.id)
-    show_main_menu(message)
+    reset_user_state(message.chat.id, user_states) 
+    show_menu(message)
 
 if __name__ == "__main__":
     init_db()

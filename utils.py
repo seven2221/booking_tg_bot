@@ -11,6 +11,15 @@ ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
+def reset_user_state(chat_id, user_states):
+    chat_id_str = str(chat_id)
+    keys_to_delete = [
+        key for key in user_states
+        if key == chat_id or str(key).startswith(f"{chat_id}_")
+    ]
+    for key in keys_to_delete:
+        user_states.pop(key, None)
+
 def format_date(date_str):
     date_obj = datetime.strptime(date_str, '%Y-%m-%d')
     weekdays = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
