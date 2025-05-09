@@ -233,14 +233,36 @@ def create_schedule_grid_image(requester_id=None):
                     time, booked, group_name = schedules[date][row_index]
                 except IndexError:
                     time, booked, group_name = "", 0, ""
+                is_admin = requester_id in ADMIN_IDS if requester_id is not None else False
+                if booked:
+                    if is_admin:
+                        if group_name == "Занято":
+                            bg_color = (255, 200, 200)
+                        else:
+                            cursor = sqlite3.connect('bookings.db').cursor()
+                            cursor.execute('SELECT status FROM slots WHERE date = ? AND time = ?', (date, time))
+                            status = cursor.fetchone()[0]
+                            cursor.close()
+                            if status == 2:
+                                bg_color = (255, 180, 180)
+                            elif status == 1:
+                                bg_color = (255, 200, 150)
+                            else:
+                                bg_color = (255, 200, 200)
+                    else:
+                        bg_color = (255, 180, 180)
+                else:
+                    bg_color = (200, 255, 200)
 
-                bg_color = (255, 200, 200) if booked else (200, 255, 200)
                 draw.rectangle([x, y, x + cell_width, y + cell_height], fill=bg_color, outline="black")
 
                 draw.text((x + padding, y + (cell_height - 26) // 2), time, fill="black", font=time_font)
 
                 if booked:
-                    label = group_name if requester_id in ADMIN_IDS else "Занято"
+                    if is_admin:
+                        label = group_name
+                    else:
+                        label = "Занято"
                     fitted_font = group_font
                     while True:
                         line_width = draw.textbbox((0, 0), label, font=fitted_font)[2]
