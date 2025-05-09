@@ -8,8 +8,8 @@ import telebot
 from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import logging
-logging.basicConfig(level=logging.INFO)
 
+logging.basicConfig(level=logging.INFO)
 load_dotenv()
 
 MAIN_BOT_TOKEN = os.getenv("MAIN_BOT_TOKEN")
@@ -18,7 +18,6 @@ ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 
 main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
-
 user_states = {}
 
 def init_db():
@@ -123,8 +122,6 @@ def reset_user_state(chat_id):
 def create_confirmation_keyboard(selected_day, selected_time):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
-
-    # Получаем все слоты с этим временем и датой
     cursor.execute('''
         SELECT id, created_by, time 
         FROM slots 
@@ -133,12 +130,8 @@ def create_confirmation_keyboard(selected_day, selected_time):
     ''', (selected_day, selected_time))
     rows = cursor.fetchall()
     conn.close()
-
     if not rows:
         return None
-
-    # Группируем по пользователю и времени
-    from datetime import datetime, timedelta
 
     bookings = []
     for row in rows:
@@ -147,16 +140,10 @@ def create_confirmation_keyboard(selected_day, selected_time):
             dt = datetime.strptime(f"{selected_day} {time_str}", "%Y-%m-%d %H:%M")
         except ValueError:
             continue
-        bookings.append({
-            'id': bid,
-            'datetime': dt,
-            'time': time_str,
-            'user_id': user_id
-        })
+        bookings.append({'id': bid, 'datetime': dt, 'time': time_str, 'user_id': user_id})
 
     grouped = []
     current_group = None
-
     for booking in bookings:
         if not current_group:
             current_group = {
@@ -166,10 +153,7 @@ def create_confirmation_keyboard(selected_day, selected_time):
                 'user_id': booking['user_id']
             }
         else:
-            if (
-                booking['user_id'] == current_group['user_id'] and
-                booking['datetime'] == current_group['end_time']
-            ):
+            if booking['user_id'] == current_group['user_id'] and booking['datetime'] == current_group['end_time']:
                 current_group['end_time'] += timedelta(hours=1)
                 current_group['ids'].append(booking['id'])
             else:
@@ -186,7 +170,6 @@ def create_confirmation_keyboard(selected_day, selected_time):
     if not grouped:
         return None
 
-    # Берём первую группу (если их несколько — это ошибка, но лучше так не делать)
     group = grouped[0]
     booking_ids = group['ids']
     user_id = group['user_id']
@@ -196,7 +179,6 @@ def create_confirmation_keyboard(selected_day, selected_time):
         InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{','.join(map(str, booking_ids))}:{user_id}"),
         InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{','.join(map(str, booking_ids))}:{user_id}")
     )
-
     return keyboard
 
 def create_schedule_grid_image(requester_id=None):
@@ -204,59 +186,59 @@ def create_schedule_grid_image(requester_id=None):
     cursor = conn.cursor()
     cursor.execute('SELECT DISTINCT date FROM slots ORDER BY date LIMIT 14')
     dates = [row[0] for row in cursor.fetchall()]
+    conn.close()
+
+    if not dates:
+        return None
+
     schedules = {
-        date: [
-            (t, b, g if requester_id in ADMIN_IDS else "Занято" if b else "")
-            for t, b, g in get_schedule_for_day(date, requester_id)
-        ]
+        date: get_schedule_for_day(date, requester_id)
         for date in dates
     }
-    conn.close()
+
     max_slots = max(len(slots) for slots in schedules.values()) if schedules else 1
-    cell_width = 450
-    cell_height = 70
-    padding = 10
-    time_font_size = 26
-    group_font_size = 24
-    date_font_size = 32
+    cell_width, cell_height, padding = 450, 70, 10
+
     try:
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
         bold_font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        time_font = ImageFont.truetype(bold_font_path, time_font_size)
-        group_font = ImageFont.truetype(font_path, group_font_size)
-        date_font = ImageFont.truetype(bold_font_path, date_font_size)
+        time_font = ImageFont.truetype(bold_font_path, 26)
+        group_font = ImageFont.truetype(font_path, 24)
+        date_font = ImageFont.truetype(bold_font_path, 32)
     except OSError:
         time_font = group_font = date_font = ImageFont.load_default()
-    num_rows = max_slots + 1
+
     img_width = 7 * (cell_width + padding) + padding
-    img_height = 2 * (num_rows * (cell_height + padding)) + padding
+    img_height = 2 * ((max_slots + 1) * (cell_height + padding)) + padding
     img = Image.new("RGB", (img_width, img_height), color="white")
     draw = ImageDraw.Draw(img)
+
     for row_offset in range(2):
-        for col, date in enumerate(dates[row_offset * 7:(row_offset + 1) * 7]):
+        for col, date in enumerate(dates[row_offset*7:(row_offset+1)*7]):
             x = padding + col * (cell_width + padding)
-            y = padding + row_offset * (num_rows * (cell_height + padding))
+            y = padding + row_offset * ((max_slots + 1) * (cell_height + padding))
             draw.rectangle([x, y, x + cell_width, y + cell_height], fill=(220, 220, 220))
-            date_text = format_date(date)
-            text_size = draw.textbbox((0, 0), date_text, font=date_font)
-            date_x = x + (cell_width - text_size[2]) // 2
-            date_y = y + (cell_height - text_size[3]) // 2
-            draw.text((date_x, date_y), date_text, fill="black", font=date_font)
+            formatted_date = format_date(date)
+            bbox = draw.textbbox((0, 0), formatted_date, font=date_font)
+            tx = x + (cell_width - bbox[2]) // 2
+            ty = y + (cell_height - bbox[3]) // 2
+            draw.text((tx, ty), formatted_date, fill="black", font=date_font)
+
     for row_index in range(max_slots):
         for row_offset in range(2):
-            for col, date in enumerate(dates[row_offset * 7:(row_offset + 1) * 7]):
-                schedule = schedules[date]
+            for col, date in enumerate(dates[row_offset*7:(row_offset+1)*7]):
                 x = padding + col * (cell_width + padding)
-                y = padding + row_offset * (num_rows * (cell_height + padding)) + (row_index + 1) * (cell_height + padding)
-                if row_index < len(schedule):
-                    time, booked, group_name = schedule[row_index]
-                else:
+                y = padding + row_offset * ((max_slots + 1) * (cell_height + padding)) + (row_index + 1) * (cell_height + padding)
+                try:
+                    time, booked, group_name = schedules[date][row_index]
+                except IndexError:
                     time, booked, group_name = "", 0, ""
+
                 bg_color = (255, 200, 200) if booked else (200, 255, 200)
-                draw.rectangle([x, y, x + cell_width, y + cell_height], fill=bg_color, outline="black", width=1)
-                time_x = x + padding
-                time_y = y + (cell_height - time_font_size) // 2
-                draw.text((time_x, time_y), time, fill="black", font=time_font)
+                draw.rectangle([x, y, x + cell_width, y + cell_height], fill=bg_color, outline="black")
+
+                draw.text((x + padding, y + (cell_height - 26) // 2), time, fill="black", font=time_font)
+
                 if booked:
                     label = group_name if requester_id in ADMIN_IDS else "Занято"
                     fitted_font = group_font
@@ -265,12 +247,16 @@ def create_schedule_grid_image(requester_id=None):
                         if line_width <= cell_width * 0.6 or fitted_font.size <= 14:
                             break
                         fitted_font = ImageFont.truetype(font_path, fitted_font.size - 1)
-                    group_x = x + cell_width // 4 + padding
-                    group_y = y + (cell_height - fitted_font.size) // 2
-                    draw.text((group_x, group_y), label, fill="black", font=fitted_font)
-    img_path = "schedule_grid.png"
-    img.save(img_path, dpi=(300, 300))
-    return img_path
+                    draw.text(
+                        (x + cell_width // 4 + padding, y + (cell_height - fitted_font.size) // 2),
+                        label,
+                        fill="black",
+                        font=fitted_font
+                    )
+
+    path = "schedule_grid.png"
+    img.save(path, dpi=(300, 300))
+    return path
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Посмотреть прайс")
 def show_price_list(message):
@@ -278,8 +264,7 @@ def show_price_list(message):
         with open('price.txt', 'r', encoding='utf-8') as file:
             price_list = file.read().strip()
     except FileNotFoundError:
-        price_list = "Извините, информация о прайсе временно недоступна."
-    
+        price_list = "Информация о прайсе временно недоступна."
     main_bot.send_message(message.chat.id, price_list)
     reset_user_state(message.chat.id)
     show_main_menu(message)
@@ -387,12 +372,7 @@ def handle_hours_input(message):
         return
     schedule = get_schedule_for_day(selected_day)
     schedule_dict = {t: b for t, b, _ in schedule}
-    conflict = False
-    for i in range(hours):
-        check_time = f"{start_hour + i}:00"
-        if schedule_dict.get(check_time, 0) != 0:
-            conflict = True
-            break
+    conflict = any(schedule_dict.get(f"{start_hour + i}:00", 0) != 0 for i in range(hours))
     if conflict:
         main_bot.send_message(chat_id, "Этот временной интервал уже занят. Выберите другое время.")
         show_free_days(message)
@@ -421,7 +401,6 @@ def handle_contact_input(message):
         return
     user_states[f"{chat_id}_contact_info"] = contact_info
     user_states[chat_id] = 'waiting_for_booking_type'
-    
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add("Репетиция", "Запись", "Другое")
     main_bot.send_message(chat_id, "Выберите тип брони:", reply_markup=keyboard)
@@ -462,22 +441,19 @@ def handle_comment_input(message):
     start_hour = int(selected_time.split(":")[0])
     end_hour = start_hour + hours
     end_time = f"{end_hour}:00"
+
     book_slots(selected_day, selected_time, hours, chat_id, group_name, booking_type, comment, contact_info)
     main_bot.send_message(chat_id, f"Вы забронировали: {selected_day} {selected_time}-{end_time} - '{group_name}'", parse_mode='Markdown')
-    
+
     mention = f"[{message.from_user.first_name}](tg://user?id={message.from_user.id})"
     note = f"🔔 Новая бронь!\nДата: {selected_day}\nВремя: {selected_time}-{end_time}\nГруппа: {group_name}\nТип: {booking_type}\nКомментарий: {comment}\nКонтакт: {contact_info}\nСоздатель: {mention}"
-    
+
     for admin_id in ADMIN_IDS:
         try:
-            admin_bot.send_message(
-                admin_id,
-                note,
-                parse_mode='Markdown',
-                reply_markup=create_confirmation_keyboard(selected_day, selected_time)
-            )
+            admin_bot.send_message(admin_id, note, parse_mode='Markdown', reply_markup=create_confirmation_keyboard(selected_day, selected_time))
         except Exception as e:
             print(f"[Error] Can't send message to admin {admin_id}: {e}")
+
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Забронировать другое время"))
     keyboard.add(types.KeyboardButton("Вернуться на главную"))

@@ -14,7 +14,7 @@ ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 
-# === Функции работы с БД ===
+
 def get_grouped_unconfirmed_bookings():
     with sqlite3.connect('bookings.db') as conn:
         cursor = conn.cursor()
@@ -54,12 +54,10 @@ def get_grouped_unconfirmed_bookings():
                 'date_str': booking['date_str']
             }
         else:
-            if (
-                booking['group_name'] == current_group['group_name'] and
+            if (booking['group_name'] == current_group['group_name'] and
                 booking['user_id'] == current_group['user_id'] and
                 booking['date_str'] == current_group['date_str'] and
-                booking['datetime'] == current_group['end_time']
-            ):
+                booking['datetime'] == current_group['end_time']):
                 current_group['end_time'] += timedelta(hours=1)
                 current_group['ids'].append(booking['id'])
             else:
@@ -105,7 +103,6 @@ def show_admin_menu(chat_id):
     admin_bot.send_message(chat_id, "Админ-меню:", reply_markup=markup)
 
 
-# === Обработчики команд ===
 @admin_bot.message_handler(commands=['start'])
 def handle_start(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -132,8 +129,10 @@ def handle_view_unconfirmed(message):
         ids = group['ids']
         user_id = group['user_id']
         markup = types.InlineKeyboardMarkup()
-        confirm_btn = types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{','.join(map(str, ids))}:{user_id}")
-        reject_btn = types.InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{','.join(map(str, ids))}:{user_id}")
+        confirm_btn = types.InlineKeyboardButton("✅ Подтвердить",
+                                                 callback_data=f"confirm:{','.join(map(str, ids))}:{user_id}")
+        reject_btn = types.InlineKeyboardButton("❌ Отклонить",
+                                                callback_data=f"reject:{','.join(map(str, ids))}:{user_id}")
         markup.add(confirm_btn, reject_btn)
         admin_bot.send_message(message.chat.id, info, reply_markup=markup)
 
@@ -147,7 +146,6 @@ def handle_back_to_menu(message):
     show_admin_menu(message.chat.id)
 
 
-# === Callback handler ===
 @admin_bot.callback_query_handler(func=lambda call: ':' in call.data)
 def handle_callback_query(call):
     try:
@@ -158,11 +156,11 @@ def handle_callback_query(call):
         admin_bot.answer_callback_query(call.id, "❌ Ошибка при обработке запроса.")
         return
 
-    # Получаем данные по всем слотам
     try:
         with sqlite3.connect('bookings.db') as conn:
             cursor = conn.cursor()
-            query = 'SELECT date, time FROM slots WHERE id IN ({}) ORDER BY time'.format(','.join('?' * len(booking_ids)))
+            query = 'SELECT date, time FROM slots WHERE id IN ({}) ORDER BY time'.format(
+                ','.join('?' * len(booking_ids)))
             cursor.execute(query, booking_ids)
             rows = cursor.fetchall()
 
@@ -171,26 +169,24 @@ def handle_callback_query(call):
 
         dates = set(row[0] for row in rows)
         times = [row[1] for row in rows]
+        date_str = dates.pop() if dates else "неизвестная дата"
         if len(dates) > 1:
-            date_str = f"{dates.pop()} и другие даты"
-        else:
-            date_str = dates.pop() if dates else "неизвестная дата"
+            date_str = f"{date_str} и другие даты"
 
         start_time = times[0]
         end_time = times[-1]
 
-        if date_str != "неизвестная дата":
+        try:
             formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-        else:
+        except ValueError:
             formatted_date = "неизвестная дата"
 
     except Exception as e:
         print(f"[Error] Не удалось получить информацию о брони: {e}")
-        confirmation_message = "Ваша бронь подтверждена. Скоро мы свяжемся с вами для уточнения деталей."
+        confirmation_message = "✅ Ваша бронь подтверждена. Скоро мы свяжемся с вами для уточнения деталей."
     else:
-        confirmation_message = f"Ваша бронь подтверждена, ожидаем вас на репетиционной базе {formatted_date} с {start_time} до {end_time}."
+        confirmation_message = f"✅ Ваша бронь подтверждена, ожидаем вас  {formatted_date} с {start_time} до {end_time} по адресу проспект Труда, 111А."
 
-    # Подтверждение или отклонение
     if action == "confirm":
         confirm_booking(booking_ids)
         try:
@@ -202,25 +198,19 @@ def handle_callback_query(call):
     elif action == "reject":
         reject_booking(booking_ids)
         try:
-            main_bot.send_message(
-                user_id,
-                "❌ Ваша бронь отклонена. Приносим извинения за неудобства. Предлагаем выбрать другое время."
-            )
+            main_bot.send_message(user_id,
+                                  "❌ Ваша бронь отклонена. Приносим извинения за неудобства. Предлагаем выбрать другое время.")
         except Exception as e:
             print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
         admin_bot.answer_callback_query(call.id, "❌ Бронь отклонена.")
 
-    # Убираем клавиатуру
     try:
-        admin_bot.edit_message_reply_markup(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            reply_markup=None
-        )
+        admin_bot.edit_message_reply_markup(chat_id=call.message.chat.id,
+                                            message_id=call.message.message_id,
+                                            reply_markup=None)
     except Exception as e:
         print(f"[Error] Не удалось удалить клавиатуру: {e}")
 
-    # Возвращаем администратору кнопки продолжения
     admin_bot.send_message(call.message.chat.id, "Выберите действие:", reply_markup=get_continue_markup())
 
 
@@ -229,22 +219,6 @@ def get_continue_markup():
     markup.add(types.KeyboardButton("Просмотреть неподтвержденные брони"))
     markup.add(types.KeyboardButton("Вернуться в меню"))
     return markup
-
-
-def get_booking_date(booking_id):
-    with sqlite3.connect('bookings.db') as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT date FROM slots WHERE id = ?", (booking_id,))
-        result = cursor.fetchone()
-    return result[0] if result and result[0] else "неизвестная дата"
-
-
-def get_booking_start_time(booking_id):
-    with sqlite3.connect('bookings.db') as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT time FROM slots WHERE id = ?", (booking_id,))
-        result = cursor.fetchone()
-    return result[0] if result and result[0] else "неизвестное время"
 
 
 if __name__ == "__main__":
