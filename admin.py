@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 import telebot
 from dotenv import load_dotenv
 from telebot import types
-import threading
 
 load_dotenv()
 
@@ -15,6 +14,7 @@ ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 
+# === Функции работы с БД ===
 def get_grouped_unconfirmed_bookings():
     with sqlite3.connect('bookings.db') as conn:
         cursor = conn.cursor()
@@ -43,7 +43,6 @@ def get_grouped_unconfirmed_bookings():
 
     grouped = []
     current_group = None
-
     for booking in bookings:
         if not current_group:
             current_group = {
@@ -73,11 +72,10 @@ def get_grouped_unconfirmed_bookings():
                     'user_id': booking['user_id'],
                     'date_str': booking['date_str']
                 }
-
     if current_group:
         grouped.append(current_group)
-
     return grouped
+
 
 def confirm_booking(booking_ids):
     with sqlite3.connect('bookings.db') as conn:
@@ -90,20 +88,24 @@ def confirm_booking(booking_ids):
 def reject_booking(booking_ids):
     with sqlite3.connect('bookings.db') as conn:
         cursor = conn.cursor()
-        query = 'DELETE FROM slots WHERE id IN ({})'.format(','.join('?' * len(booking_ids)))
+        query = 'UPDATE slots SET status = 3 WHERE id IN ({})'.format(','.join('?' * len(booking_ids)))
         cursor.execute(query, booking_ids)
         conn.commit()
+
 
 def format_booking_info(group):
     start_time = group['start_time'].strftime("%H:%M")
     end_time = group['end_time'].strftime("%H:%M")
     return f"ID: {','.join(map(str, group['ids']))} | {group['date_str']} | {start_time}-{end_time} | {group['group_name']}"
 
+
 def show_admin_menu(chat_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("Просмотреть неподтвержденные брони"))
     admin_bot.send_message(chat_id, "Админ-меню:", reply_markup=markup)
 
+
+# === Обработчики команд ===
 @admin_bot.message_handler(commands=['start'])
 def handle_start(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -111,6 +113,7 @@ def handle_start(message):
         return
     admin_bot.set_my_commands([telebot.types.BotCommand("/start", "Главное меню")])
     show_admin_menu(message.chat.id)
+
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "Просмотреть неподтвержденные брони")
 def handle_view_unconfirmed(message):
@@ -128,7 +131,6 @@ def handle_view_unconfirmed(message):
         info = format_booking_info(group)
         ids = group['ids']
         user_id = group['user_id']
-
         markup = types.InlineKeyboardMarkup()
         confirm_btn = types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{','.join(map(str, ids))}:{user_id}")
         reject_btn = types.InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{','.join(map(str, ids))}:{user_id}")
@@ -139,61 +141,95 @@ def handle_view_unconfirmed(message):
     markup_back.add(types.KeyboardButton("Вернуться в меню"))
     admin_bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup_back)
 
+
 @admin_bot.message_handler(func=lambda msg: msg.text == "Вернуться в меню")
 def handle_back_to_menu(message):
     show_admin_menu(message.chat.id)
 
-@admin_bot.callback_query_handler(func=lambda call: True)
+
+# === Callback handler ===
+@admin_bot.callback_query_handler(func=lambda call: ':' in call.data)
 def handle_callback_query(call):
     try:
         action, booking_ids_str, user_id_str = call.data.split(":")
         booking_ids = list(map(int, booking_ids_str.split(',')))
         user_id = int(user_id_str)
     except ValueError:
-        admin_bot.answer_callback_query(call.id, "Ошибка обработки запроса.")
+        admin_bot.answer_callback_query(call.id, "❌ Ошибка при обработке запроса.")
         return
 
+    # Получаем данные по всем слотам
+    try:
+        with sqlite3.connect('bookings.db') as conn:
+            cursor = conn.cursor()
+            query = 'SELECT date, time FROM slots WHERE id IN ({}) ORDER BY time'.format(','.join('?' * len(booking_ids)))
+            cursor.execute(query, booking_ids)
+            rows = cursor.fetchall()
+
+        if not rows:
+            raise Exception("Не найдено данных о слотах")
+
+        dates = set(row[0] for row in rows)
+        times = [row[1] for row in rows]
+        if len(dates) > 1:
+            date_str = f"{dates.pop()} и другие даты"
+        else:
+            date_str = dates.pop() if dates else "неизвестная дата"
+
+        start_time = times[0]
+        end_time = times[-1]
+
+        if date_str != "неизвестная дата":
+            formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+        else:
+            formatted_date = "неизвестная дата"
+
+    except Exception as e:
+        print(f"[Error] Не удалось получить информацию о брони: {e}")
+        confirmation_message = "Ваша бронь подтверждена. Скоро мы свяжемся с вами для уточнения деталей."
+    else:
+        confirmation_message = f"Ваша бронь подтверждена, ожидаем вас на репетиционной базе {formatted_date} с {start_time} до {end_time}."
+
+    # Подтверждение или отклонение
     if action == "confirm":
         confirm_booking(booking_ids)
         try:
-            first_booking_id = booking_ids[0]
-            date_str = get_booking_date(first_booking_id)
-            time_str = get_booking_start_time(first_booking_id)
+            main_bot.send_message(user_id, confirmation_message)
+        except Exception as e:
+            print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
+        admin_bot.answer_callback_query(call.id, "✅ Бронь подтверждена.")
 
-            if date_str != "неизвестная дата" and time_str != "неизвестное время":
-                date_formatted = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-                main_bot.send_message(
-                    user_id,
-                    f"Ваша бронь подтверждена, ожидаем вас на репетиционной базе {date_formatted} с {time_str}."
-                )
-            else:
-                main_bot.send_message(
-                    user_id,
-                    "Ваша бронь подтверждена. Скоро мы свяжемся с вами для уточнения деталей."
-                )
-        except:
-            pass
-        admin_bot.answer_callback_query(call.id, "Бронь подтверждена.")
-
-    if action == "reject":
+    elif action == "reject":
         reject_booking(booking_ids)
         try:
             main_bot.send_message(
                 user_id,
-                "Ваша бронь отклонена. Приносим извинения за неудобства. Предлагаем выбрать другое время."
+                "❌ Ваша бронь отклонена. Приносим извинения за неудобства. Предлагаем выбрать другое время."
             )
-        except:
-            pass
-        admin_bot.answer_callback_query(call.id, "Бронь отклонена.")
+        except Exception as e:
+            print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
+        admin_bot.answer_callback_query(call.id, "❌ Бронь отклонена.")
 
-    admin_bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-    admin_bot.send_message(call.message.chat.id, "Продолжить работу?", reply_markup=get_continue_markup())
-    
+    # Убираем клавиатуру
+    try:
+        admin_bot.edit_message_reply_markup(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=None
+        )
+    except Exception as e:
+        print(f"[Error] Не удалось удалить клавиатуру: {e}")
+
+    # Возвращаем администратору кнопки продолжения
+    admin_bot.send_message(call.message.chat.id, "Выберите действие:", reply_markup=get_continue_markup())
+
+
 def get_continue_markup():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("Просмотреть неподтвержденные брони"))
     markup.add(types.KeyboardButton("Вернуться в меню"))
     return markup
+
 
 def get_booking_date(booking_id):
     with sqlite3.connect('bookings.db') as conn:
@@ -209,6 +245,7 @@ def get_booking_start_time(booking_id):
         cursor.execute("SELECT time FROM slots WHERE id = ?", (booking_id,))
         result = cursor.fetchone()
     return result[0] if result and result[0] else "неизвестное время"
+
 
 if __name__ == "__main__":
     admin_bot.polling(none_stop=True)
