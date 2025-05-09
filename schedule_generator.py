@@ -7,7 +7,7 @@ from utils import is_admin, format_date, get_schedule_for_day
 def create_schedule_grid_image(requester_id=None):
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute('SELECT DISTINCT date FROM slots ORDER BY date LIMIT 14')
+    cursor.execute('SELECT DISTINCT date FROM slots ORDER BY date LIMIT 28')
     dates = [row[0] for row in cursor.fetchall()]
     conn.close()
 
@@ -31,13 +31,21 @@ def create_schedule_grid_image(requester_id=None):
     except OSError:
         time_font = group_font = date_font = ImageFont.load_default()
 
-    img_width = 7 * (cell_width + padding) + padding
-    img_height = 2 * ((max_slots + 1) * (cell_height + padding)) + padding
+    rows = 4
+    cols = 7
+    img_width = cols * (cell_width + padding) + padding
+    img_height = rows * ((max_slots + 1) * (cell_height + padding)) + padding
+
     img = Image.new("RGB", (img_width, img_height), color="white")
     draw = ImageDraw.Draw(img)
 
-    for row_offset in range(2):
-        for col, date in enumerate(dates[row_offset*7:(row_offset+1)*7]):
+    for row_offset in range(rows):
+        start_index = row_offset * cols
+        end_index = min(start_index + cols, len(dates))
+        for col in range(cols):
+            if start_index + col >= len(dates):
+                break
+            date = dates[start_index + col]
             x = padding + col * (cell_width + padding)
             y = padding + row_offset * ((max_slots + 1) * (cell_height + padding))
             draw.rectangle([x, y, x + cell_width, y + cell_height], fill=(220, 220, 220))
@@ -47,9 +55,15 @@ def create_schedule_grid_image(requester_id=None):
             ty = y + (cell_height - bbox[3]) // 2
             draw.text((tx, ty), formatted_date, fill="black", font=date_font)
 
-    for row_index in range(max_slots):
-        for row_offset in range(2):
-            for col, date in enumerate(dates[row_offset*7:(row_offset+1)*7]):
+    for row_offset in range(rows):
+        start_index = row_offset * cols
+        end_index = min(start_index + cols, len(dates))
+        for row_index in range(max_slots):
+            for col in range(cols):
+                index = start_index + col
+                if index >= len(dates):
+                    break
+                date = dates[index]
                 x = padding + col * (cell_width + padding)
                 y = padding + row_offset * ((max_slots + 1) * (cell_height + padding)) + (row_index + 1) * (cell_height + padding)
                 try:
@@ -80,7 +94,7 @@ def create_schedule_grid_image(requester_id=None):
                     fitted_font = group_font
                     while True:
                         line_width = draw.textbbox((0, 0), label, font=fitted_font)[2]
-                        if line_width <= cell_width * 0.6 or fitted_font.size <= 14:
+                        if line_width <= cell_width * 0.6 or fitted_font.size <= 28:
                             break
                         fitted_font = ImageFont.truetype(font_path, fitted_font.size - 1)
                     draw.text(

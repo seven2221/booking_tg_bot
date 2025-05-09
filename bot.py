@@ -9,7 +9,7 @@ from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from schedule_generator import create_schedule_grid_image
-from utils import is_admin, reset_user_state, format_date, get_schedule_for_day
+from utils import is_admin, reset_user_state, format_date, get_schedule_for_day, get_hour_word
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
@@ -188,7 +188,7 @@ def book_time(message):
 def view_schedule(message):
     path = create_schedule_grid_image(message.chat.id)
     with open(path, "rb") as img:
-        main_bot.send_photo(message.chat.id, img, caption="Расписание на ближайшие дни:")
+        main_bot.send_photo(message.chat.id, img, caption="Расписание на ближайшие 28 дней:")
     os.remove(path)
     reset_user_state(message.chat.id, user_states)
     show_menu(message)
@@ -245,7 +245,7 @@ def handle_time_selection(message):
     if selected_time not in available_times:
         main_bot.send_message(chat_id, "Время занято или недоступно. Попробуйте снова.")
         return
-    main_bot.send_message(chat_id, "Сколько часов будет занято?", reply_markup=types.ReplyKeyboardRemove())
+    main_bot.send_message(chat_id, "Сколько часов будет занято?\nУкажите числом.", reply_markup=types.ReplyKeyboardRemove())
     user_states[chat_id] = 'waiting_for_hours'
     user_states[f"{chat_id}_selected_time"] = selected_time
 
@@ -286,7 +286,7 @@ def handle_group_name_input(message):
         return
     user_states[chat_id] = 'waiting_for_contact'
     user_states[f"{chat_id}_group_name"] = group_name
-    main_bot.send_message(chat_id, "Введите ваш номер телефона или другой контакт:")
+    main_bot.send_message(chat_id, "Введите ваш номер телефона, тег в телеграмме или укажите другой способ связаться с вами.\n\nМы сообщим о непредвиденных изменениях графика работы репетиционной базы.")
 
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_contact')
 def handle_contact_input(message):
@@ -299,13 +299,13 @@ def handle_contact_input(message):
     user_states[chat_id] = 'waiting_for_booking_type'
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add("Репетиция", "Запись", "Другое")
-    main_bot.send_message(chat_id, "Выберите тип брони:", reply_markup=keyboard)
+    main_bot.send_message(chat_id, "Тип брони.\n\nКак планируете использовать пространство репетиционной базы в бронируемое время?", reply_markup=keyboard)
 
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_booking_type')
 def handle_booking_type_selection(message):
     chat_id = message.chat.id
     if message.text == "Другое":
-        main_bot.send_message(chat_id, "Введите тип брони:", reply_markup=types.ReplyKeyboardRemove())
+        main_bot.send_message(chat_id, "Чем планируете заниматься?", reply_markup=types.ReplyKeyboardRemove())
         user_states[chat_id] = 'waiting_for_custom_booking_type'
     else:
         user_states[f"{chat_id}_booking_type"] = message.text.strip()
@@ -322,7 +322,7 @@ def handle_custom_booking_type(message):
 def show_comment_prompt(chat_id):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add("Ок")
-    main_bot.send_message(chat_id, "Введите комментарий или нажмите 'Ок' для пропуска:", reply_markup=keyboard)
+    main_bot.send_message(chat_id, "Если вам необходимы какие-либо дополнительные услуги из нашего прайса, пожалуйста, укажите их в комментарии.\n\nЕсли доп.услуги не требуются, нажмите 'Ок'.", reply_markup=keyboard)
 
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_comment')
 def handle_comment_input(message):
@@ -335,10 +335,14 @@ def handle_comment_input(message):
     booking_type = user_states.get(f"{chat_id}_booking_type")
     contact_info = user_states.get(f"{chat_id}_contact_info")
     start_hour = int(selected_time.split(":")[0])
-    end_hour = start_hour + hours
-    end_time = f"{end_hour}:00"
+    end_time = f"{start_hour + hours}:00"
     book_slots(selected_day, selected_time, hours, chat_id, group_name, booking_type, comment, contact_info)
-    main_bot.send_message(chat_id, f"Вы забронировали: {selected_day} {selected_time}-{end_time} - '{group_name}'", parse_mode='Markdown')
+    try:
+        date_obj = datetime.strptime(selected_day, "%Y-%m-%d")
+        formatted_date = date_obj.strftime("%d.%m.%Y")
+    except ValueError:
+        formatted_date = selected_day 
+    main_bot.send_message(chat_id, f"Спасибо! 👍\nВы забронировали {hours} {get_hour_word(hours)} с {selected_time} по {end_time} {formatted_date}\n'{group_name}'\nПожалуйста, ожидайте подтверждения брони администратором.", parse_mode='Markdown')
     mention = f"[{message.from_user.first_name}](tg://user?id={message.from_user.id})"
     note = f"🔔 Новая бронь!\nДата: {selected_day}\nВремя: {selected_time}-{end_time}\nГруппа: {group_name}\nТип: {booking_type}\nКомментарий: {comment}\nКонтакт: {contact_info}\nСоздатель: {mention}"
     for admin_id in ADMIN_IDS:
@@ -349,7 +353,7 @@ def handle_comment_input(message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Забронировать другое время"))
     keyboard.add(types.KeyboardButton("Вернуться на главную"))
-    main_bot.send_message(chat_id, "Что дальше?", reply_markup=keyboard)
+    main_bot.send_message(chat_id, "Продолжить?", reply_markup=keyboard)
     reset_user_state(chat_id, user_states)
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Забронировать другое время")
