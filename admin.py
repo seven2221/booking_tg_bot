@@ -246,22 +246,33 @@ def notify_subscribers_for_cancellation(group):
             print(f"[Error] Can't notify user {user_id}: {e}")
     conn.close()
 
+def notify_booking_cancelled(user_id):
+    try:
+        main_bot.send_message(int(user_id), "❌ Ваша бронь была отменена по техническим причинам.\nПриносим свои извинения за доставленные неудобства.\nСвязь с админом: @cyberocalypse")
+    except Exception as e:
+        print(f"[Error] Не удалось отправить уведомление пользователю {user_id}: {e}")
+
 def clear_booking_slots(slot_ids):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
-    query = '''UPDATE slots SET 
-                user_id = NULL, 
-                group_name = NULL, 
-                created_by = NULL, 
-                booking_type = NULL, 
-                comment = NULL, 
-                contact_info = NULL, 
-                status = 0,
-                subscribed_users = NULL
-              WHERE id IN ({})'''.format(','.join('?' * len(slot_ids)))
+    query = 'SELECT DISTINCT created_by FROM slots WHERE id IN ({})'.format(','.join('?' * len(slot_ids)))
     cursor.execute(query, slot_ids)
+    creators = [row[0] for row in cursor.fetchall() if row[0] is not None]
+    update_query = '''UPDATE slots SET 
+                        user_id = NULL, 
+                        group_name = NULL, 
+                        created_by = NULL, 
+                        booking_type = NULL, 
+                        comment = NULL, 
+                        contact_info = NULL, 
+                        status = 0,
+                        subscribed_users = NULL
+                      WHERE id IN ({})'''.format(','.join('?' * len(slot_ids)))
+    cursor.execute(update_query, slot_ids)
     conn.commit()
     conn.close()
+    for user_id in creators:
+        notify_booking_cancelled(user_id)
 
 @admin_bot.message_handler(func=lambda msg: msg.text in ["✅ Да", "❌ Нет"] and user_states.get(msg.from_user.id, {}).get("step") == "ask_notify_subscribers")
 def handle_notify_choice(message):
