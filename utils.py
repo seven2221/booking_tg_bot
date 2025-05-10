@@ -100,7 +100,7 @@ def get_hour_word(hours):
         return "часа"
     else:
         return "часов"
-    
+
 def get_grouped_unconfirmed_bookings():
     with sqlite3.connect('bookings.db') as conn:
         cursor = conn.cursor()
