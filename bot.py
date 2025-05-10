@@ -66,7 +66,7 @@ def view_schedule(message):
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Отменить бронь")
 def cancel_booking(message):
-    main_bot.send_message(message.chat.id, "Функция отмены временно недоступна. Обратитесь к @admin_nora")
+    main_bot.send_message(message.chat.id, "Функция отмены временно недоступна. Обратитесь к : @cyberocalypse")
     reset_user_state(message.chat.id, user_states)
     show_menu(message)
 

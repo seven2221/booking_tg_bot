@@ -25,7 +25,7 @@ def show_menu(chat_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("Просмотреть неподтвержденные брони"))
     markup.add(types.KeyboardButton("Посмотреть расписание"))
-    # admin_bot.send_message(chat_id, "Админ-меню:", reply_markup=markup)
+    admin_bot.send_message(chat_id, "Админ-меню:", reply_markup=markup)
 
 @admin_bot.message_handler(commands=['start'])
 def handle_start(message):
@@ -108,7 +108,7 @@ def handle_callback_query(call):
         except ValueError:
             formatted_date = "неизвестная дата"
         
-        confirmation_message = f"✅ Ваша бронь для группы {group_name} подтверждена!\nОжидаем вас {formatted_date} в {start_time} по адресу проспект Труда, 111А."
+        confirmation_message = f"✅ Ваша бронь для группы {group_name} подтверждена!\nОжидаем вас {formatted_date} в {start_time} по адресу проспект Труда, 111А.\nСвязь с админом: @cyberocalypse"
         decline_message = f"❌ Ваша бронь для группы {group_name or 'неизвестная группа'} {formatted_date} в {start_time} отклонена.\nПриносим извинения за неудобства. 😔\nПредлагаем выбрать другое время."
     
     except Exception as e:
