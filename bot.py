@@ -9,7 +9,7 @@ from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from schedule_generator import create_schedule_grid_image
-from utils import is_admin, reset_user_state, format_date, get_schedule_for_day, get_hour_word, update_booking_status, get_free_days, book_slots, create_confirmation_keyboard
+from utils import is_admin, reset_user_state, format_date, get_schedule_for_day, get_hour_word, update_booking_status, get_free_days, book_slots, create_confirmation_keyboard, get_booked_days_filtered, add_subscriber_to_slot
 from db_init import init_db
 
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +41,7 @@ def show_menu(message):
     keyboard.add(types.KeyboardButton("Посмотреть расписание"))
     keyboard.add(types.KeyboardButton("Отменить бронь"))
     keyboard.add(types.KeyboardButton("Посмотреть прайс"))
+    keyboard.add(types.KeyboardButton("Быть в курсе, если освободится время"))
     main_bot.send_message(message.chat.id, "Выберите действие:", reply_markup=keyboard)
     reset_user_state(message.chat.id, user_states)
 
@@ -68,6 +69,78 @@ def cancel_booking(message):
     main_bot.send_message(message.chat.id, "Функция отмены временно недоступна. Обратитесь к @admin_nora")
     reset_user_state(message.chat.id, user_states)
     show_menu(message)
+
+@main_bot.message_handler(func=lambda msg: msg.text == "Быть в курсе, если освободится время")
+def subscribe_to_free_slots(message):
+    reset_user_state(message.chat.id, user_states)
+    booked_days = get_booked_days_filtered()
+    if not booked_days:
+        main_bot.send_message(message.chat.id, "Нет забронированных дней.")
+        return
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(*[types.KeyboardButton(format_date(day)) for day in booked_days])
+    main_bot.send_message(message.chat.id, "Выберите день:", reply_markup=keyboard)
+    user_states[message.chat.id] = 'waiting_for_subscribe_day'
+
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_subscribe_day')
+def handle_subscribe_day_selection(message):
+    try:
+        selected_day = datetime.strptime(message.text.split()[0], '%d.%m').replace(year=datetime.now().year).strftime('%Y-%m-%d')
+    except ValueError:
+        main_bot.send_message(message.chat.id, "Неверный формат. Попробуйте снова.")
+        subscribe_to_free_slots(message)
+        return
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT time FROM slots 
+        WHERE date = ? AND status IN (1, 2)
+    ''', (selected_day,))
+    times = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    if not times:
+        main_bot.send_message(message.chat.id, "В этот день нет подходящих слотов.")
+        return
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    keyboard.add(*[types.KeyboardButton(t) for t in times])
+    keyboard.add(types.KeyboardButton("Выбрать другой день"))
+    main_bot.send_message(message.chat.id, "Выберите занятое время:", reply_markup=keyboard)
+    user_states[message.chat.id] = 'waiting_for_subscribe_time'
+    user_states[f"{message.chat.id}_subscribe_day"] = selected_day
+
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_subscribe_time')
+def handle_subscribe_time_selection(message):
+    chat_id = message.chat.id
+    selected_day = user_states.get(f"{chat_id}_subscribe_day")
+    if message.text == "Выбрать другой день":
+        reset_user_state(chat_id, user_states)
+        subscribe_to_free_slots(message)
+        return
+    selected_time = message.text.strip()
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT status FROM slots 
+        WHERE date = ? AND time = ?
+    ''', (selected_day, selected_time))
+    result = cursor.fetchone()
+    conn.close()
+    if not result or result[0] not in (1, 2):
+        main_bot.send_message(chat_id, "Это время недоступно.")
+        return
+    add_subscriber_to_slot(selected_day, selected_time, chat_id)
+
+    main_bot.send_message(chat_id, "Спасибо!\nМы оповестим вас, если это время освободится.")
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(types.KeyboardButton("Оповестить про другое время"))
+    keyboard.add(types.KeyboardButton("Вернуться на главную"))
+    main_bot.send_message(chat_id, "Продолжить?", reply_markup=keyboard)
+    reset_user_state(chat_id, user_states)
+
+@main_bot.message_handler(func=lambda msg: msg.text == "Оповестить про другое время")
+def book_another_time(message):
+    reset_user_state(message.chat.id, user_states)
+    subscribe_to_free_slots(message)
 
 def show_free_days(message):
     free_days = get_free_days()
@@ -130,21 +203,14 @@ def handle_hours_input(message):
     except ValueError:
         main_bot.send_message(chat_id, "Введите корректное количество часов.")
         return
-
     selected_day = user_states.get(f"{chat_id}_selected_day")
     selected_time = user_states.get(f"{chat_id}_selected_time")
-
     start_hour = int(selected_time.split(":")[0])
-
-    # Проверяем, что не слишком много часов (> 12), но допускаем переход на следующий день
-    if hours > 12:
-        main_bot.send_message(chat_id, "Максимум можно забронировать 12 часов.")
+    if hours > 8:
+        main_bot.send_message(chat_id, "Максимум можно забронировать 8 часов.")
         return
-
     schedule = get_schedule_for_day(selected_day)
     schedule_dict = {t: b for t, b, _ in schedule}
-
-    # Проверяем конфликты с текущим днём
     conflict = False
     for i in range(hours):
         current_hour = start_hour + i
@@ -152,12 +218,10 @@ def handle_hours_input(message):
         if schedule_dict.get(time_str, 0) != 0:
             conflict = True
             break
-
     if conflict:
         main_bot.send_message(chat_id, "Этот временной интервал уже занят. Выберите другое время.")
         show_free_days(message)
         return
-
     main_bot.send_message(chat_id, "Введите название группы:", reply_markup=types.ReplyKeyboardRemove())
     user_states[chat_id] = 'waiting_for_group_name'
     user_states[f"{chat_id}_hours"] = hours

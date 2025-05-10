@@ -26,6 +26,57 @@ def format_date(date_str):
     weekdays = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
     return f"{date_obj.strftime('%d.%m')} {weekdays[date_obj.weekday()]}"
 
+def get_booked_days_filtered():
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT DISTINCT date FROM slots 
+        WHERE time >= '11:00' AND status IN (1, 2)
+    ''')
+    days = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return days
+
+def add_subscriber_to_slot(date, time, user_id):
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT subscribed_users FROM slots
+        WHERE date = ? AND time = ?
+    ''', (date, time))
+    result = cursor.fetchone()
+
+    current_subs = set(result[0].split(',') if result[0] else [])
+    if str(user_id) not in current_subs:
+        current_subs.add(str(user_id))
+        updated_subs = ','.join(current_subs)
+        cursor.execute('''
+            UPDATE slots SET subscribed_users = ?
+            WHERE date = ? AND time = ?
+        ''', (updated_subs, date, time))
+        conn.commit()
+    conn.close()
+
+# def notify_subscribers(date, time, freed_by_admin=False):
+#     conn = sqlite3.connect('bookings.db')
+#     cursor = conn.cursor()
+#     cursor.execute('''
+#         SELECT subscribed_users FROM schedule
+#         WHERE date = ? AND time = ?
+#     ''', (date, time))
+#     result = cursor.fetchone()
+#     conn.close()
+
+#     if not result or not result[0]:
+#         return
+
+#     subscribers = result[0].split(',')
+#     for user_id in subscribers:
+#         try:
+#             main_bot.send_message(int(user_id), f"🔔 Внимание! Освободилось время:\nДата: {date}\nВремя: {time}")
+#         except Exception as e:
+#             print(f"[Error] Can't notify user {user_id}: {e}")
+
 def get_schedule_for_day(date, user_id=None):
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
     cursor = conn.cursor()
