@@ -90,21 +90,30 @@ def handle_subscribe_day_selection(message):
         main_bot.send_message(message.chat.id, "Неверный формат. Попробуйте снова.")
         subscribe_to_free_slots(message)
         return
+    chat_id = message.chat.id
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT time FROM slots 
+        SELECT time, subscribed_users FROM slots 
         WHERE date = ? AND status IN (1, 2)
     ''', (selected_day,))
-    times = [row[0] for row in cursor.fetchall()]
+    rows = cursor.fetchall()
     conn.close()
-    if not times:
+    if not rows:
         main_bot.send_message(message.chat.id, "В этот день нет подходящих слотов.")
         return
+    available_times = []
+    for time, subs in rows:
+        subs_list = subs.split(',') if subs else []
+        if str(chat_id) not in subs_list:
+            available_times.append(time)
+    if not available_times:
+        main_bot.send_message(message.chat.id, "Вы уже подписаны на все доступные слоты этого дня.")
+        return
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
-    keyboard.add(*[types.KeyboardButton(t) for t in times])
+    keyboard.add(*[types.KeyboardButton(t) for t in available_times])
     keyboard.add(types.KeyboardButton("Выбрать другой день"))
-    main_bot.send_message(message.chat.id, "Выберите занятое время:", reply_markup=keyboard)
+    main_bot.send_message(message.chat.id, "Выберите время, на которое хотите подписаться:", reply_markup=keyboard)
     user_states[message.chat.id] = 'waiting_for_subscribe_time'
     user_states[f"{message.chat.id}_subscribe_day"] = selected_day
 
