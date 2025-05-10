@@ -162,17 +162,23 @@ def get_free_days():
 def book_slots(date, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
     cursor = conn.cursor()
+
     start_hour = int(start_time.split(":")[0])
+    date_obj = datetime.strptime(date, "%Y-%m-%d")
+
     for i in range(hours):
         current_hour = start_hour + i
-        if current_hour >= 24:
-            break
-        time = f"{current_hour}:00"
+        current_date = date_obj + timedelta(days=current_hour // 24)
+        current_hour_in_day = current_hour % 24
+        time = f"{current_hour_in_day}:00"
+        current_date_str = current_date.strftime("%Y-%m-%d")
+
         cursor.execute('''
             UPDATE slots 
             SET user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?, contact_info = ?, status = 1
             WHERE date = ? AND time = ?''',
-            (user_id, group_name, user_id, booking_type, comment, contact_info, date, time))
+            (user_id, group_name, user_id, booking_type, comment, contact_info, current_date_str, time))
+
     conn.commit()
     conn.close()
     

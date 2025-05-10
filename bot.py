@@ -92,10 +92,11 @@ def handle_day_selection(message):
         show_free_days(message)
         return
     schedule = get_schedule_for_day(selected_day, message.chat.id)
-    text = "\n".join([f"{t} - *{g}*" if g else f"{t} -" for t, _, g in schedule])
+    filtered_schedule = [(t, b, g) for t, b, g in schedule if 11 <= int(t.split(':')[0]) < 24]
+    text = "\n".join([f"{t} - *{g}*" if g else f"{t} -" for t, _, g in filtered_schedule])
     main_bot.send_message(message.chat.id, f"Расписание на {format_date(selected_day)}:\n{text}", parse_mode='Markdown')
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
-    keyboard.add(*[types.KeyboardButton(t) for t, b, _ in schedule if not b])
+    keyboard.add(*[types.KeyboardButton(t) for t, b, _ in filtered_schedule if not b])
     keyboard.add(types.KeyboardButton("Выбрать другой день"))
     main_bot.send_message(message.chat.id, "Выберите время:", reply_markup=keyboard)
     user_states[message.chat.id] = 'waiting_for_time'
@@ -129,20 +130,34 @@ def handle_hours_input(message):
     except ValueError:
         main_bot.send_message(chat_id, "Введите корректное количество часов.")
         return
+
     selected_day = user_states.get(f"{chat_id}_selected_day")
     selected_time = user_states.get(f"{chat_id}_selected_time")
+
     start_hour = int(selected_time.split(":")[0])
-    end_hour = start_hour + hours
-    if end_hour > 24 or (start_hour == 23 and hours > 2):
-        main_bot.send_message(chat_id, "Недопустимое количество часов для выбранного времени.")
+
+    # Проверяем, что не слишком много часов (> 12), но допускаем переход на следующий день
+    if hours > 12:
+        main_bot.send_message(chat_id, "Максимум можно забронировать 12 часов.")
         return
+
     schedule = get_schedule_for_day(selected_day)
     schedule_dict = {t: b for t, b, _ in schedule}
-    conflict = any(schedule_dict.get(f"{start_hour + i}:00", 0) != 0 for i in range(hours))
+
+    # Проверяем конфликты с текущим днём
+    conflict = False
+    for i in range(hours):
+        current_hour = start_hour + i
+        time_str = f"{current_hour % 24}:00"
+        if schedule_dict.get(time_str, 0) != 0:
+            conflict = True
+            break
+
     if conflict:
         main_bot.send_message(chat_id, "Этот временной интервал уже занят. Выберите другое время.")
         show_free_days(message)
         return
+
     main_bot.send_message(chat_id, "Введите название группы:", reply_markup=types.ReplyKeyboardRemove())
     user_states[chat_id] = 'waiting_for_group_name'
     user_states[f"{chat_id}_hours"] = hours
