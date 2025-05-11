@@ -3,6 +3,7 @@ import sqlite3
 
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 load_dotenv()
@@ -25,6 +26,12 @@ def format_date(date_str):
     date_obj = datetime.strptime(date_str, '%Y-%m-%d')
     weekdays = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
     return f"{date_obj.strftime('%d.%m')} {weekdays[date_obj.weekday()]}"
+
+def format_date_to_db(date_str):
+    day_month, _ = date_str.split()
+    year = datetime.now().year
+    date_obj = datetime.strptime(f"{day_month}.{year}", "%d.%m.%Y")
+    return date_obj.strftime("%Y-%m-%d")
 
 def get_booked_days_filtered():
     conn = sqlite3.connect('bookings.db')
@@ -57,25 +64,148 @@ def add_subscriber_to_slot(date, time, user_id):
         conn.commit()
     conn.close()
 
-# def notify_subscribers(date, time, freed_by_admin=False):
-#     conn = sqlite3.connect('bookings.db')
-#     cursor = conn.cursor()
-#     cursor.execute('''
-#         SELECT subscribed_users FROM schedule
-#         WHERE date = ? AND time = ?
-#     ''', (date, time))
-#     result = cursor.fetchone()
-#     conn.close()
+def send_date_selection_keyboard(chat_id, dates, bot):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    buttons = [types.KeyboardButton(format_date(d)) for d in dates]
+    for i in range(0, len(buttons), 3):
+        markup.row(*buttons[i:i+3])
+    markup.row(types.KeyboardButton("На главную"))
+    bot.send_message(chat_id, "Выберите день для отмены брони:", reply_markup=markup)
 
-#     if not result or not result[0]:
-#         return
+def get_grouped_bookings_for_cancellation(date, admin_id):
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    prev_day = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    next_day = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    cursor.execute('''
+        SELECT id, date, time, group_name, created_by FROM slots
+        WHERE date IN (?, ?, ?)
+          AND status IN (1, 2)
+        ORDER BY date, time
+    ''', (prev_day, date, next_day))
+    rows = cursor.fetchall()
+    conn.close()
+    bookings = []
+    for row in rows:
+        bid, date_str, time_str, group_name, user_id = row
+        try:
+            dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        bookings.append({
+            'id': bid,
+            'datetime': dt,
+            'date_str': date_str,
+            'time_str': time_str,
+            'group_name': group_name,
+            'user_id': user_id
+        })
+    grouped = []
+    current_group = None
+    for booking in bookings:
+        if not current_group:
+            current_group = {
+                'start_time': booking['datetime'],
+                'end_time': booking['datetime'] + timedelta(hours=1),
+                'ids': [booking['id']],
+                'group_name': booking['group_name'],
+                'user_id': booking['user_id'],
+                'date_str': booking['date_str']
+            }
+        else:
+            if (
+                booking['group_name'] == current_group['group_name'] and
+                booking['user_id'] == current_group['user_id'] and
+                booking['datetime'] == current_group['end_time']
+            ):
+                current_group['end_time'] += timedelta(hours=1)
+                current_group['ids'].append(booking['id'])
+            else:
+                grouped.append(current_group)
+                current_group = {
+                    'start_time': booking['datetime'],
+                    'end_time': booking['datetime'] + timedelta(hours=1),
+                    'ids': [booking['id']],
+                    'group_name': booking['group_name'],
+                    'user_id': booking['user_id'],
+                    'date_str': booking['date_str']
+                }
+    if current_group:
+        grouped.append(current_group)
+    filtered_grouped = [
+        g for g in grouped
+        if g['start_time'].strftime("%Y-%m-%d") == date
+    ]
+    return filtered_grouped
 
-#     subscribers = result[0].split(',')
-#     for user_id in subscribers:
-#         try:
-#             main_bot.send_message(int(user_id), f"🔔 Внимание! Освободилось время:\nДата: {date}\nВремя: {time}")
-#         except Exception as e:
-#             print(f"[Error] Can't notify user {user_id}: {e}")
+def send_booking_selection_keyboard(chat_id, bookings, bot):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for idx, group in enumerate(bookings):
+        start_time = group['start_time'].strftime("%H:%M")
+        end_time = group['end_time'].strftime("%H:%M")
+        btn_text = f"{start_time}–{end_time}"
+        markup.add(types.KeyboardButton(btn_text))
+    markup.row(types.KeyboardButton("⬅️ Выбрать другой день"))
+    markup.row(types.KeyboardButton("🏠 На главную"))
+    bot.send_message(chat_id, "Выберите бронь для отмены:", reply_markup=markup)
+
+def notify_subscribers_for_cancellation(group, bot):
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    ids = group["ids"]
+    query = 'SELECT time, subscribed_users FROM slots WHERE id IN ({})'.format(','.join('?' * len(ids)))
+    cursor.execute(query, ids)
+    results = cursor.fetchall()
+    users_to_notify = {}
+    for time, subs_str in results:
+        if not subs_str:
+            continue
+        for user_id in subs_str.split(','):
+            user_id = user_id.strip()
+            if not user_id:
+                continue
+            if user_id not in users_to_notify:
+                users_to_notify[user_id] = []
+            users_to_notify[user_id].append(time)
+    for user_id, times in users_to_notify.items():
+        first = min(times)
+        last = max(times)
+        try:
+            bot.send_message(
+                int(user_id),
+                f"🔔 Слот освободился:\nДата: {group['date_str']}\nВремя: {first}–{last}"
+            )
+        except Exception as e:
+            print(f"[Error] Can't notify user {user_id}: {e}")
+    conn.close()
+
+def notify_booking_cancelled(user_id,bot):
+    try:
+        bot.send_message(int(user_id), "❌ Ваша бронь была отменена по техническим причинам.\nПриносим свои извинения за доставленные неудобства.\nСвязь с админом: @cyberocalypse")
+    except Exception as e:
+        print(f"[Error] Не удалось отправить уведомление пользователю {user_id}: {e}")
+
+def clear_booking_slots(slot_ids, bot):
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    query = 'SELECT DISTINCT created_by FROM slots WHERE id IN ({})'.format(','.join('?' * len(slot_ids)))
+    cursor.execute(query, slot_ids)
+    creators = [row[0] for row in cursor.fetchall() if row[0] is not None]
+    update_query = '''UPDATE slots SET 
+                        user_id = NULL, 
+                        group_name = NULL, 
+                        created_by = NULL, 
+                        booking_type = NULL, 
+                        comment = NULL, 
+                        contact_info = NULL, 
+                        status = 0,
+                        subscribed_users = NULL
+                      WHERE id IN ({})'''.format(','.join('?' * len(slot_ids)))
+    cursor.execute(update_query, slot_ids)
+    conn.commit()
+    conn.close()
+    for user_id in creators:
+        notify_booking_cancelled(user_id, bot)
 
 def get_schedule_for_day(date, user_id=None):
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
