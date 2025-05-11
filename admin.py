@@ -347,7 +347,6 @@ def handle_callback_query(call):
         admin_bot.answer_callback_query(call.id, "❌ Ошибка при обработке запроса.")
         return
     group_name = None
-
     try:
         with sqlite3.connect('bookings.db') as conn:
             cursor = conn.cursor()
@@ -355,8 +354,12 @@ def handle_callback_query(call):
                 ','.join('?' * len(booking_ids)))
             cursor.execute(query_slots, booking_ids)
             rows = cursor.fetchall()
-        if not rows:
-            raise Exception("Не найдено данных о слотах")
+            if not rows:
+                raise Exception("Не найдено данных о слотах")
+            cursor.execute('SELECT id, status FROM slots WHERE id IN ({})'.format(
+                ','.join('?' * len(booking_ids))), booking_ids)
+            status_rows = cursor.fetchall()
+            status_set = set(status for _, status in status_rows)
         dates = set(row[0] for row in rows)
         times = [row[1] for row in rows]
         group_name = rows[0][2]
@@ -369,32 +372,32 @@ def handle_callback_query(call):
             formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
         except ValueError:
             formatted_date = "неизвестная дата"
-        
         confirmation_message = f"✅ Ваша бронь для группы {group_name} подтверждена!\nОжидаем вас {formatted_date} в {start_time} по адресу проспект Труда, 111А.\nСвязь с админом: @cyberocalypse"
         decline_message = f"❌ Ваша бронь для группы {group_name or 'неизвестная группа'} {formatted_date} в {start_time} отклонена.\nПриносим извинения за неудобства. 😔\nПредлагаем выбрать другое время."
-    
+        if action == "confirm":
+            confirm_booking(booking_ids)
+            try:
+                main_bot.send_message(user_id, confirmation_message)
+            except Exception as e:
+                print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
+            admin_bot.answer_callback_query(call.id, "✅ Бронь подтверждена.")
+        elif action == "reject":
+            reject_booking(booking_ids)
+            try:
+                main_bot.send_message(user_id, decline_message)
+            except Exception as e:
+                print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
+            admin_bot.answer_callback_query(call.id, "❌ Бронь отклонена.")
     except Exception as e:
-        print(f"[Error] Не удалось получить информацию о брони: {e}")
-    if action == "confirm":
-        confirm_booking(booking_ids)
+        print(f"[Error] Не удалось обработать callback: {e}")
+        admin_bot.answer_callback_query(call.id, "❌ Ошибка при обработке брони.")
+    finally:
         try:
-            main_bot.send_message(user_id, confirmation_message)
+            admin_bot.edit_message_reply_markup(chat_id=call.message.chat.id,
+                                                message_id=call.message.message_id,
+                                                reply_markup=None)
         except Exception as e:
-            print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
-        admin_bot.answer_callback_query(call.id, "✅ Бронь подтверждена.")
-    elif action == "reject":
-        reject_booking(booking_ids)
-        try:
-            main_bot.send_message(user_id, decline_message)
-        except Exception as e:
-            print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
-        admin_bot.answer_callback_query(call.id, "❌ Бронь отклонена.")
-    try:
-        admin_bot.edit_message_reply_markup(chat_id=call.message.chat.id,
-                                            message_id=call.message.message_id,
-                                            reply_markup=None)
-    except Exception as e:
-        print(f"[Error] Не удалось удалить клавиатуру: {e}")
+            print(f"[Error] Не удалось удалить клавиатуру: {e}")
 
 if __name__ == "__main__":
     admin_bot.polling(none_stop=True)

@@ -141,7 +141,6 @@ def get_grouped_unconfirmed_bookings():
         else:
             if (booking['group_name'] == current_group['group_name'] and
                 booking['user_id'] == current_group['user_id'] and
-                booking['date_str'] == current_group['date_str'] and
                 booking['datetime'] == current_group['end_time']):
                 current_group['end_time'] += timedelta(hours=1)
                 current_group['ids'].append(booking['id'])
@@ -162,14 +161,16 @@ def get_grouped_unconfirmed_bookings():
 def confirm_booking(booking_ids):
     with sqlite3.connect('bookings.db') as conn:
         cursor = conn.cursor()
-        query = 'UPDATE slots SET status = 2 WHERE id IN ({})'.format(','.join('?' * len(booking_ids)))
+        placeholders = ','.join('?' * len(booking_ids))
+        query = f'UPDATE slots SET status = 2 WHERE id IN ({placeholders})'
         cursor.execute(query, booking_ids)
         conn.commit()
 
 def reject_booking(booking_ids):
     with sqlite3.connect('bookings.db') as conn:
         cursor = conn.cursor()
-        query = '''UPDATE slots SET 
+        placeholders = ','.join('?' * len(booking_ids))
+        query = f'''UPDATE slots SET 
                     user_id = NULL, 
                     group_name = NULL, 
                     created_by = NULL, 
@@ -177,7 +178,7 @@ def reject_booking(booking_ids):
                     comment = NULL, 
                     contact_info = NULL, 
                     status = 0 
-                  WHERE id IN ({})'''.format(','.join('?' * len(booking_ids)))
+                  WHERE id IN ({placeholders})'''
         cursor.execute(query, booking_ids)
         conn.commit()
 
@@ -219,71 +220,72 @@ def book_slots(date, start_time, hours, user_id, group_name, booking_type, comme
 
     for i in range(hours):
         current_hour = start_hour + i
-        current_date = date_obj + timedelta(days=current_hour // 24)
-        current_hour_in_day = current_hour % 24
-        time = f"{current_hour_in_day}:00"
+        days_passed = current_hour // 24
+        hour_in_day = current_hour % 24
+        current_date = date_obj + timedelta(days=days_passed)
+        time = f"{hour_in_day:02d}:00"
         current_date_str = current_date.strftime("%Y-%m-%d")
-
         cursor.execute('''
             UPDATE slots 
             SET user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?, contact_info = ?, status = 1
             WHERE date = ? AND time = ?''',
             (user_id, group_name, user_id, booking_type, comment, contact_info, current_date_str, time))
-
     conn.commit()
     conn.close()
-    
-def create_confirmation_keyboard(selected_day, selected_time):
-    conn = sqlite3.connect('bookings.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT id, created_by, time 
-        FROM slots 
-        WHERE date = ? AND time >= ?
-        ORDER BY time
-    ''', (selected_day, selected_time))
-    rows = cursor.fetchall()
-    conn.close()
-    if not rows:
-        return None
-    bookings = []
-    for row in rows:
-        bid, user_id, time_str = row
-        try:
-            dt = datetime.strptime(f"{selected_day} {time_str}", "%Y-%m-%d %H:%M")
-        except ValueError:
-            continue
-        bookings.append({'id': bid, 'datetime': dt, 'time': time_str, 'user_id': user_id})
-    grouped = []
-    current_group = None
-    for booking in bookings:
-        if not current_group:
-            current_group = {
-                'start_time': booking['datetime'],
-                'end_time': booking['datetime'] + timedelta(hours=1),
-                'ids': [booking['id']],
-                'user_id': booking['user_id']
-            }
-        else:
-            if booking['user_id'] == current_group['user_id'] and booking['datetime'] == current_group['end_time']:
-                current_group['end_time'] += timedelta(hours=1)
-                current_group['ids'].append(booking['id'])
-            else:
-                grouped.append(current_group)
-                current_group = {
-                    'start_time': booking['datetime'],
-                    'end_time': booking['datetime'] + timedelta(hours=1),
-                    'ids': [booking['id']],
-                    'user_id': booking['user_id']
-                }
-    if current_group:
-        grouped.append(current_group)
-    if not grouped:
-        return None
-    group = grouped[0]
-    booking_ids = group['ids']
-    user_id = group['user_id']
+
+def get_user_id_from_booking_ids(booking_ids):
+    with sqlite3.connect('bookings.db') as conn:
+        cursor = conn.cursor()
+        query = 'SELECT created_by FROM slots WHERE id IN ({})'.format(','.join('?' * len(booking_ids)))
+        cursor.execute(query, booking_ids)
+        result = cursor.fetchone()
+        return result[0] if result else None
+
+def create_confirmation_keyboard(selected_day, selected_time, booking_ids=None):
     keyboard = InlineKeyboardMarkup()
+    if not booking_ids:
+        conn = sqlite3.connect('bookings.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT created_by FROM slots 
+            WHERE date = ? AND time = ?
+        ''', (selected_day, selected_time))
+        creator_row = cursor.fetchone()
+        if not creator_row:
+            conn.close()
+            return None
+        creator_id = creator_row[0]
+        cursor.execute('''
+            SELECT id, created_by, date, time 
+            FROM slots 
+            WHERE created_by = ? 
+            ORDER BY date, time
+        ''', (creator_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        if not rows:
+            return None
+        bookings = []
+        for row in rows:
+            bid, user_id, date_str, time_str = row
+            try:
+                dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+            except ValueError:
+                continue
+            bookings.append({'id': bid})
+        grouped = []
+        current_group = None
+        for booking in bookings:
+            if not current_group:
+                current_group = {'ids': [booking['id']]}
+            else:
+                current_group['ids'].append(booking['id'])
+        if current_group:
+            grouped.append(current_group)
+        if not grouped:
+            return None
+        booking_ids = grouped[0]['ids']
+    user_id = get_user_id_from_booking_ids(booking_ids)
     keyboard.row(
         InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{','.join(map(str, booking_ids))}:{user_id}"),
         InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{','.join(map(str, booking_ids))}:{user_id}")

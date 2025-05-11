@@ -223,7 +223,13 @@ def handle_hours_input(message):
     conflict = False
     for i in range(hours):
         current_hour = start_hour + i
-        time_str = f"{current_hour % 24}:00"
+        days_passed = current_hour // 24
+        hour_in_day = current_hour % 24
+        current_date = datetime.strptime(selected_day, "%Y-%m-%d") + timedelta(days=days_passed)
+        current_date_str = current_date.strftime("%Y-%m-%d")
+        full_schedule = get_schedule_for_day(current_date_str)
+        schedule_dict = {t: b for t, b, _ in full_schedule}
+        time_str = f"{hour_in_day:02d}:00"
         if schedule_dict.get(time_str, 0) != 0:
             conflict = True
             break
@@ -293,19 +299,41 @@ def handle_comment_input(message):
     booking_type = user_states.get(f"{chat_id}_booking_type")
     contact_info = user_states.get(f"{chat_id}_contact_info")
     start_hour = int(selected_time.split(":")[0])
-    end_time = f"{start_hour + hours}:00"
+    date_obj = datetime.strptime(selected_day, "%Y-%m-%d")
+    start_datetime = datetime.combine(date_obj.date(), datetime.min.time()).replace(hour=start_hour, minute=0)
+    end_datetime = start_datetime + timedelta(hours=hours)
+    end_time = f"{end_datetime.hour}:00"
     book_slots(selected_day, selected_time, hours, chat_id, group_name, booking_type, comment, contact_info)
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    booking_ids = []
+    current_date = datetime.strptime(selected_day, "%Y-%m-%d")
+    for i in range(hours):
+        current_hour = start_hour + i
+        days_passed = current_hour // 24
+        hour_in_day = current_hour % 24
+        slot_date = (current_date + timedelta(days=days_passed)).strftime("%Y-%m-%d")
+        slot_time = f"{hour_in_day:02d}:00"
+        cursor.execute("SELECT id FROM slots WHERE date = ? AND time = ? AND user_id = ?", (slot_date, slot_time, chat_id))
+        row = cursor.fetchone()
+        if row:
+            booking_ids.append(row[0])
+    conn.close()
     try:
-        date_obj = datetime.strptime(selected_day, "%Y-%m-%d")
-        formatted_date = date_obj.strftime("%d.%m.%Y")
+        formatted_date = datetime.strptime(selected_day, "%Y-%m-%d").strftime("%d.%m.%Y")
     except ValueError:
-        formatted_date = selected_day 
+        formatted_date = selected_day
     main_bot.send_message(chat_id, f"Спасибо! 👍\nВы забронировали {hours} {get_hour_word(hours)} с {selected_time} по {end_time} {formatted_date}\nГруппа: {group_name}\nПожалуйста, ожидайте подтверждения брони администратором.", parse_mode='Markdown')
     mention = f"[{message.from_user.first_name}](tg://user?id={message.from_user.id})"
     note = f"🔔 Новая бронь!\nДата: {selected_day}\nВремя: {selected_time}-{end_time}\nГруппа: {group_name}\nТип: {booking_type}\nКомментарий: {comment}\nКонтакт: {contact_info}\nСоздатель: {mention}"
     for admin_id in ADMIN_IDS:
         try:
-            admin_bot.send_message(admin_id, note, parse_mode='Markdown', reply_markup=create_confirmation_keyboard(selected_day, selected_time))
+            admin_bot.send_message(
+                admin_id,
+                note,
+                parse_mode='Markdown',
+                reply_markup=create_confirmation_keyboard(selected_day, selected_time, booking_ids)
+            )
         except Exception as e:
             print(f"[Error] Can't send message to admin {admin_id}: {e}")
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
