@@ -58,12 +58,17 @@ def handle_cancel_booking(message):
     ''')
     all_dates = [row[0] for row in cursor.fetchall()]
     conn.close()
-    if not all_dates:
+    valid_dates = []
+    for date_str in all_dates:
+        bookings = get_grouped_bookings_for_cancellation(date_str, admin_id)
+        if bookings:
+            valid_dates.append(date_str)
+    if not valid_dates:
         admin_bot.send_message(message.chat.id, "Нет доступных дней для отмены броней.")
         show_menu(message.chat.id)
         return
-    user_states[admin_id] = {"step": "choose_date_for_cancellation", "valid_dates": all_dates}
-    send_date_selection_keyboard(message.chat.id, all_dates)
+    user_states[admin_id] = {"step": "choose_date_for_cancellation", "valid_dates": valid_dates}
+    send_date_selection_keyboard(message.chat.id, valid_dates)
 
 def send_date_selection_keyboard(chat_id, dates):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -97,13 +102,14 @@ def handle_choose_date_for_cancellation(message):
 def get_grouped_bookings_for_cancellation(date, admin_id):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
+    prev_day = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
     next_day = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
     cursor.execute('''
         SELECT id, date, time, group_name, created_by FROM slots
-        WHERE date IN (?, ?)
+        WHERE date IN (?, ?, ?)
           AND status IN (1, 2)
         ORDER BY date, time
-    ''', (date, next_day))
+    ''', (prev_day, date, next_day))
     rows = cursor.fetchall()
     conn.close()
     bookings = []
@@ -155,7 +161,7 @@ def get_grouped_bookings_for_cancellation(date, admin_id):
         grouped.append(current_group)
     filtered_grouped = [
         g for g in grouped
-        if g['date_str'] == date
+        if g['start_time'].strftime("%Y-%m-%d") == date
     ]
     return filtered_grouped
 
