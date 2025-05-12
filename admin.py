@@ -12,7 +12,6 @@ from schedule_generator import create_schedule_grid_image
 load_dotenv()
 
 user_states = {}
-admin_states = {}
 
 ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 MAIN_BOT_TOKEN = os.getenv("MAIN_BOT_TOKEN")
@@ -21,12 +20,13 @@ ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 
-def show_menu(chat_id):
+def show_menu(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("Просмотреть неподтвержденные брони"))
     markup.add(types.KeyboardButton("Посмотреть расписание"))
     markup.add(types.KeyboardButton("Отменить бронь"))
-    admin_bot.send_message(chat_id, "Админ-меню:", reply_markup=markup)
+    admin_bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
+    reset_user_state(message.chat.id, user_states)
 
 @admin_bot.message_handler(commands=['start'])
 def handle_start(message):
@@ -34,7 +34,7 @@ def handle_start(message):
         admin_bot.send_message(message.chat.id, "❌ У вас нет прав для использования этого бота.")
         return
     admin_bot.set_my_commands([telebot.types.BotCommand("/start", "Главное меню")])
-    show_menu(message.chat.id)
+    show_menu(message)
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "Посмотреть расписание")
 def view_schedule(message):
@@ -60,12 +60,12 @@ def handle_cancel_booking(message):
     conn.close()
     valid_dates = []
     for date_str in all_dates:
-        bookings = get_grouped_bookings_for_cancellation(date_str, admin_id)
+        bookings = get_grouped_bookings_for_cancellation(date_str)
         if bookings:
             valid_dates.append(date_str)
     if not valid_dates:
         admin_bot.send_message(message.chat.id, "Нет доступных дней для отмены броней.")
-        show_menu(message.chat.id)
+        show_menu(message)
         return
     user_states[admin_id] = {"step": "choose_date_for_cancellation", "valid_dates": valid_dates}
     send_date_selection_keyboard(message.chat.id, valid_dates, admin_bot)
@@ -77,11 +77,11 @@ def handle_choose_date_for_cancellation(message):
     if selected_date not in user_states[admin_id]["valid_dates"]:
         admin_bot.send_message(message.chat.id, "Выберите корректный день из предложенных.")
         return
-    bookings = get_grouped_bookings_for_cancellation(selected_date, admin_id)
+    bookings = get_grouped_bookings_for_cancellation(selected_date)
     if not bookings:
         admin_bot.send_message(message.chat.id, "На этот день нет броней для отмены.")
         reset_user_state(message.chat.id, user_states)
-        show_menu(message.chat.id)
+        show_menu(message)
         return
     user_states[admin_id].update({
         "step": "choose_booking_for_cancellation",
@@ -127,7 +127,7 @@ def handle_notify_choice(message):
         notify_subscribers_for_cancellation(group, main_bot)
     clear_booking_slots(group["ids"], main_bot)
     reset_user_state(admin_id, user_states)
-    show_menu(message.chat.id)
+    show_menu(message)
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "⬅️ Выбрать другой день" and user_states.get(msg.from_user.id, {}).get("step") == "choose_booking_for_cancellation")
 def handle_back_from_booking_selection(message):
@@ -138,7 +138,7 @@ def handle_back_from_booking_selection(message):
 @admin_bot.message_handler(func=lambda msg: msg.text == "🏠 На главную")
 def handle_go_home(message):
     reset_user_state(message.chat.id, user_states)
-    show_menu(message.chat.id)
+    show_menu(message)
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "Просмотреть неподтвержденные брони")
 def handle_view_unconfirmed(message):
@@ -149,7 +149,7 @@ def handle_view_unconfirmed(message):
     groups = get_grouped_unconfirmed_bookings()
     if not groups:
         admin_bot.send_message(message.chat.id, "Нет неподтвержденных броней.")
-        show_menu(message.chat.id)
+        show_menu(message)
         return
     user_states[admin_id] = 'awaiting_confirmation_action'
     for group in groups:
@@ -161,7 +161,7 @@ def handle_view_unconfirmed(message):
         reject_btn = types.InlineKeyboardButton("❌ Отклонить",callback_data=f"reject:{','.join(map(str, ids))}:{user_id}")
         markup.add(confirm_btn, reject_btn)
         admin_bot.send_message(message.chat.id, info, reply_markup=markup)
-    show_menu(message.chat.id)
+    show_menu(message)
 
 @admin_bot.callback_query_handler(func=lambda call: ':' in call.data)
 def handle_callback_query(call):
@@ -200,6 +200,7 @@ def handle_callback_query(call):
             formatted_date = "неизвестная дата"
         confirmation_message = f"✅ Ваша бронь для группы {group_name} подтверждена!\nОжидаем вас {formatted_date} в {start_time} по адресу проспект Труда, 111А.\nСвязь с админом: @cyberocalypse"
         decline_message = f"❌ Ваша бронь для группы {group_name or 'неизвестная группа'} {formatted_date} в {start_time} отклонена.\nПриносим извинения за неудобства. 😔\nПредлагаем выбрать другое время."
+        cancellation_message = f"🚫 Ваша бронь для группы {group_name or 'неизвестная группа'} {formatted_date} в {start_time} была отменена администратором по вашей заявке.\n"
         if action == "confirm":
             confirm_booking(booking_ids)
             try:
@@ -214,14 +215,24 @@ def handle_callback_query(call):
             except Exception as e:
                 print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
             admin_bot.answer_callback_query(call.id, "❌ Бронь отклонена.")
+        elif action == "cancel":
+            notify_subscribers_for_cancellation({"ids": booking_ids}, main_bot)
+            reject_booking(booking_ids)
+            try:
+                main_bot.send_message(user_id, cancellation_message)
+            except Exception as e:
+                print(f"[Error] Не удалось уведомить пользователя {user_id}: {e}")
+            admin_bot.answer_callback_query(call.id, "🚫 Бронь успешно отменена.")
     except Exception as e:
         print(f"[Error] Не удалось обработать callback: {e}")
         admin_bot.answer_callback_query(call.id, "❌ Ошибка при обработке брони.")
     finally:
         try:
-            admin_bot.edit_message_reply_markup(chat_id=call.message.chat.id,
-                                                message_id=call.message.message_id,
-                                                reply_markup=None)
+            admin_bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=None
+            )
         except Exception as e:
             print(f"[Error] Не удалось удалить клавиатуру: {e}")
 

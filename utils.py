@@ -72,17 +72,21 @@ def send_date_selection_keyboard(chat_id, dates, bot):
     markup.row(types.KeyboardButton("На главную"))
     bot.send_message(chat_id, "Выберите день для отмены брони:", reply_markup=markup)
 
-def get_grouped_bookings_for_cancellation(date, admin_id):
+def get_grouped_bookings_for_cancellation(date, created_by=None):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
     prev_day = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
     next_day = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-    cursor.execute('''
+    query = '''
         SELECT id, date, time, group_name, created_by FROM slots
         WHERE date IN (?, ?, ?)
           AND status IN (1, 2)
-        ORDER BY date, time
-    ''', (prev_day, date, next_day))
+    '''
+    params = [prev_day, date, next_day]
+    if created_by is not None:
+        query += ' AND created_by = ?'
+        params.append(created_by)
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     bookings = []
@@ -420,4 +424,63 @@ def create_confirmation_keyboard(selected_day, selected_time, booking_ids=None):
         InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{','.join(map(str, booking_ids))}:{user_id}"),
         InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{','.join(map(str, booking_ids))}:{user_id}")
     )
+    return keyboard
+
+def create_cancellation_keyboard(selected_day, selected_time, booking_ids=None):
+    keyboard = InlineKeyboardMarkup()
+    
+    if not booking_ids:
+        conn = sqlite3.connect('bookings.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT created_by FROM slots 
+            WHERE date = ? AND time = ?
+        ''', (selected_day, selected_time))
+        creator_row = cursor.fetchone()
+        if not creator_row:
+            conn.close()
+            return None
+        creator_id = creator_row[0]
+        
+        cursor.execute('''
+            SELECT id, created_by, date, time 
+            FROM slots 
+            WHERE created_by = ? 
+            ORDER BY date, time
+        ''', (creator_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            return None
+        
+        bookings = []
+        for row in rows:
+            bid, user_id, date_str, time_str = row
+            try:
+                dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+            except ValueError:
+                continue
+            bookings.append({'id': bid})
+        
+        grouped = []
+        current_group = None
+        for booking in bookings:
+            if not current_group:
+                current_group = {'ids': [booking['id']]}
+            else:
+                current_group['ids'].append(booking['id'])
+        if current_group:
+            grouped.append(current_group)
+        if not grouped:
+            return None
+        booking_ids = grouped[0]['ids']
+    
+    user_id = get_user_id_from_booking_ids(booking_ids)
+
+    # Только одна кнопка — ✅ Подтвердить отмену
+    keyboard.row(
+        InlineKeyboardButton("✅ Подтвердить отмену", callback_data=f"cancel:{','.join(map(str, booking_ids))}:{user_id}")
+    )
+    
     return keyboard

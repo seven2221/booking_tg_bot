@@ -9,7 +9,7 @@ from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from schedule_generator import create_schedule_grid_image
-from utils import is_admin, reset_user_state, format_date, get_schedule_for_day, get_hour_word, update_booking_status, get_free_days, book_slots, create_confirmation_keyboard, get_booked_days_filtered, add_subscriber_to_slot
+from utils import is_admin, reset_user_state, format_date, format_date_to_db, get_schedule_for_day, get_hour_word, update_booking_status, get_free_days, book_slots, create_confirmation_keyboard, create_cancellation_keyboard, get_booked_days_filtered, add_subscriber_to_slot, get_grouped_bookings_for_cancellation, send_date_selection_keyboard
 from db_init import init_db
 
 logging.basicConfig(level=logging.INFO)
@@ -37,8 +37,8 @@ def show_price_list(message):
 
 def show_menu(message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(types.KeyboardButton("Забронировать время"))
     keyboard.add(types.KeyboardButton("Посмотреть расписание"))
+    keyboard.add(types.KeyboardButton("Забронировать время"))
     keyboard.add(types.KeyboardButton("Отменить бронь"))
     keyboard.add(types.KeyboardButton("Посмотреть прайс"))
     keyboard.add(types.KeyboardButton("Быть в курсе, если освободится время"))
@@ -61,12 +61,6 @@ def view_schedule(message):
     with open(path, "rb") as img:
         main_bot.send_photo(message.chat.id, img, caption="Расписание на ближайшие 28 дней:")
     os.remove(path)
-    reset_user_state(message.chat.id, user_states)
-    show_menu(message)
-
-@main_bot.message_handler(func=lambda msg: msg.text == "Отменить бронь")
-def cancel_booking(message):
-    main_bot.send_message(message.chat.id, "Функция отмены временно недоступна. Обратитесь к : @cyberocalypse")
     reset_user_state(message.chat.id, user_states)
     show_menu(message)
 
@@ -351,6 +345,135 @@ def book_another_time(message):
 def return_to_main_menu(message):
     reset_user_state(message.chat.id, user_states) 
     show_menu(message)
+
+
+@main_bot.message_handler(func=lambda msg: msg.text == "Отменить бронь")
+def handle_cancel_booking(message):
+    chat_id = message.chat.id
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT DISTINCT date FROM slots 
+        WHERE status IN (1, 2) AND created_by = ?
+        ORDER BY date
+    ''', (chat_id,))
+    all_dates = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    valid_dates = []
+    for date_str in all_dates:
+        bookings = get_grouped_bookings_for_cancellation(date_str, chat_id)
+        if bookings:
+            valid_dates.append(date_str)
+    if not valid_dates:
+        main_bot.send_message(chat_id, "У вас нет активных броней.")
+        show_menu(message)
+        return
+    user_states[chat_id] = {
+        "step": "choose_date_for_cancellation",
+        "valid_dates": valid_dates
+    }
+    send_date_selection_keyboard(chat_id, valid_dates, main_bot)
+
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "choose_date_for_cancellation")
+def handle_date_chosen_for_cancellation(message):
+    chat_id = message.chat.id
+
+    if message.text == "На главную":
+        reset_user_state(chat_id, user_states)
+        show_menu(message)
+        return
+
+    selected_date_formatted = message.text
+    try:
+        selected_date = datetime.strptime(selected_date_formatted, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        try:
+            selected_date = format_date_to_db(selected_date_formatted)
+        except Exception as e:
+            main_bot.send_message(chat_id, "Неверный формат даты. Попробуйте снова.")
+            send_date_selection_keyboard(chat_id, user_states[chat_id]["valid_dates"], main_bot)
+            return
+
+    valid_dates = [datetime.strptime(d, "%Y-%m-%d").strftime("%Y-%m-%d") for d in user_states[chat_id]["valid_dates"]]
+    if selected_date not in valid_dates:
+        main_bot.send_message(chat_id, "Выберите одну из предложенных дат.")
+        return
+
+    bookings = get_grouped_bookings_for_cancellation(selected_date, chat_id)
+    if not bookings:
+        main_bot.send_message(chat_id, "На эту дату у вас нет броней.")
+        return
+
+    user_states[chat_id].update({
+        "step": "choose_booking_for_cancellation",
+        "selected_date": selected_date,
+        "bookings": bookings
+    })
+    send_cancellation_options(chat_id, bookings)
+
+def send_cancellation_options(chat_id, bookings):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for booking in bookings:
+        start_time = booking['start_time'].strftime("%H:%M")
+        end_time = booking['end_time'].strftime("%H:%M")
+        group_name = booking['group_name']
+        markup.add(types.KeyboardButton(f"{start_time}–{end_time}, {group_name}"))
+    markup.add(types.KeyboardButton("На главную"))
+    main_bot.send_message(chat_id, "Выберите бронь для отмены:", reply_markup=markup)
+
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "choose_booking_for_cancellation")
+def handle_user_choose_booking_for_cancellation(message):
+    chat_id = message.chat.id
+    if message.text == "На главную":
+        reset_user_state(chat_id, user_states)
+        show_menu(message)
+        return
+    selected_text = message.text.strip()
+    bookings = user_states[chat_id].get("bookings", [])
+    found = False
+    for index, booking in enumerate(bookings):
+        start_time = booking['start_time'].strftime("%H:%M")
+        end_time = booking['end_time'].strftime("%H:%M")
+        group_name = booking['group_name']
+        button_text = f"{start_time}–{end_time}, {group_name}"
+        if selected_text == button_text:
+            found = True
+            break
+    if not found:
+        main_bot.send_message(chat_id, "Выберите одну из предложенных броней.")
+        send_cancellation_options(chat_id, bookings)
+        return
+    selected_booking = bookings[index]
+    booking_ids = selected_booking["ids"]
+    start_time = selected_booking["start_time"].strftime("%H:%M")
+    end_time = selected_booking["end_time"].strftime("%H:%M")
+    date_str = selected_booking["date_str"]
+    group_name = selected_booking["group_name"]
+    try:
+        formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+    except ValueError:
+        formatted_date = date_str
+    mention = f"[{message.from_user.first_name}](tg://user?id={chat_id})"
+    note = (
+        f"🔔 Запрос на отмену брони!\n"
+        f"Дата: {date_str}\n"
+        f"Время: {start_time}–{end_time}\n"
+        f"Группа: {group_name}\n"
+        f"Создатель: {mention}"
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            admin_bot.send_message(
+                admin_id,
+                note,
+                parse_mode='Markdown',
+                reply_markup=create_cancellation_keyboard(date_str, start_time, booking_ids)
+            )
+        except Exception as e:
+            print(f"[Error] Can't send cancellation request to admin {admin_id}: {e}")
+    main_bot.send_message(chat_id, "Запрос на отмену брони отправлен администратору. Ожидайте подтверждения.")
+    show_menu(message)
+
 
 if __name__ == "__main__":
     init_db()

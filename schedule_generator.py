@@ -4,10 +4,16 @@ from PIL import Image, ImageDraw, ImageFont
 from utils import is_admin, format_date, get_schedule_for_day
 
 
-def create_schedule_grid_image(requester_id=None):
+def create_schedule_grid_image(requester_id=None, days_to_show=28):
+    today = datetime.now().strftime("%Y-%m-%d")
+
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute('SELECT DISTINCT date FROM slots ORDER BY date LIMIT 28')
+
+    cursor.execute(
+        'SELECT DISTINCT date FROM slots WHERE date >= ? ORDER BY date LIMIT ?',
+        (today, days_to_show)
+    )
     dates = [row[0] for row in cursor.fetchall()]
     conn.close()
 
@@ -34,8 +40,9 @@ def create_schedule_grid_image(requester_id=None):
     except OSError:
         time_font = group_font = date_font = ImageFont.load_default()
 
-    rows = 4
     cols = 7
+    rows = (len(dates) + cols - 1) // cols
+
     img_width = cols * (cell_width + padding) + padding
     img_height = rows * ((max_slots + 1) * (cell_height + padding)) + padding
 
@@ -43,12 +50,11 @@ def create_schedule_grid_image(requester_id=None):
     draw = ImageDraw.Draw(img)
 
     for row_offset in range(rows):
-        start_index = row_offset * cols
-        end_index = min(start_index + cols, len(dates))
         for col in range(cols):
-            if start_index + col >= len(dates):
+            index = row_offset * cols + col
+            if index >= len(dates):
                 break
-            date = dates[start_index + col]
+            date = dates[index]
             x = padding + col * (cell_width + padding)
             y = padding + row_offset * ((max_slots + 1) * (cell_height + padding))
             draw.rectangle([x, y, x + cell_width, y + cell_height], fill=(220, 220, 220))
@@ -59,11 +65,9 @@ def create_schedule_grid_image(requester_id=None):
             draw.text((tx, ty), formatted_date, fill="black", font=date_font)
 
     for row_offset in range(rows):
-        start_index = row_offset * cols
-        end_index = min(start_index + cols, len(dates))
         for row_index in range(max_slots):
             for col in range(cols):
-                index = start_index + col
+                index = row_offset * cols + col
                 if index >= len(dates):
                     break
                 date = dates[index]
