@@ -23,6 +23,7 @@ main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 
 user_states = {}
+today = datetime.now().strftime("%Y-%m-%d")
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Посмотреть прайс")
 def show_price_list(message):
@@ -89,8 +90,8 @@ def handle_subscribe_day_selection(message):
     cursor = conn.cursor()
     cursor.execute('''
         SELECT time, subscribed_users FROM slots 
-        WHERE date = ? AND status IN (1, 2)
-    ''', (selected_day,))
+        WHERE date = ? AND status IN (1, 2)  AND date >= ?
+    ''', (selected_day, today))
     rows = cursor.fetchall()
     conn.close()
     if not rows:
@@ -354,9 +355,9 @@ def handle_cancel_booking(message):
     cursor = conn.cursor()
     cursor.execute('''
         SELECT DISTINCT date FROM slots 
-        WHERE status IN (1, 2) AND created_by = ?
+        WHERE status IN (1, 2) AND created_by = ? AND date >= ?
         ORDER BY date
-    ''', (chat_id,))
+    ''', (chat_id, today))
     all_dates = [row[0] for row in cursor.fetchall()]
     conn.close()
     valid_dates = []

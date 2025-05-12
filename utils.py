@@ -10,6 +10,8 @@ load_dotenv()
 
 ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 
+today = datetime.now().strftime("%Y-%m-%d")
+
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
@@ -36,10 +38,7 @@ def format_date_to_db(date_str):
 def get_booked_days_filtered():
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
-    cursor.execute('''
-        SELECT DISTINCT date FROM slots 
-        WHERE time >= '11:00' AND status IN (1, 2)
-    ''')
+    cursor.execute("SELECT DISTINCT date FROM slots WHERE time >= '11:00' AND status IN (1, 2)  AND date >= ?", (today,))
     days = [row[0] for row in cursor.fetchall()]
     conn.close()
     return days
@@ -47,20 +46,14 @@ def get_booked_days_filtered():
 def add_subscriber_to_slot(date, time, user_id):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
-    cursor.execute('''
-        SELECT subscribed_users FROM slots
-        WHERE date = ? AND time = ?
-    ''', (date, time))
+    cursor.execute("SELECT subscribed_users FROM slots WHERE date = ? AND time = ?", (date, time))
     result = cursor.fetchone()
 
     current_subs = set(result[0].split(',') if result[0] else [])
     if str(user_id) not in current_subs:
         current_subs.add(str(user_id))
         updated_subs = ','.join(current_subs)
-        cursor.execute('''
-            UPDATE slots SET subscribed_users = ?
-            WHERE date = ? AND time = ?
-        ''', (updated_subs, date, time))
+        cursor.execute("UPDATE slots SET subscribed_users = ? WHERE date = ? AND time = ?", (updated_subs, date, time))
         conn.commit()
     conn.close()
 
@@ -340,7 +333,7 @@ def update_booking_status(date, time, status):
 def get_free_days():
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute('SELECT DISTINCT date FROM slots WHERE status = 0 ORDER BY date')
+    cursor.execute("SELECT DISTINCT date FROM slots WHERE status = 0 AND date >= ? ORDER BY date", (today,))
     free_days = [row[0] for row in cursor.fetchall()]
     conn.close()
     return free_days
@@ -428,7 +421,6 @@ def create_confirmation_keyboard(selected_day, selected_time, booking_ids=None):
 
 def create_cancellation_keyboard(selected_day, selected_time, booking_ids=None):
     keyboard = InlineKeyboardMarkup()
-    
     if not booking_ids:
         conn = sqlite3.connect('bookings.db')
         cursor = conn.cursor()
@@ -441,7 +433,6 @@ def create_cancellation_keyboard(selected_day, selected_time, booking_ids=None):
             conn.close()
             return None
         creator_id = creator_row[0]
-        
         cursor.execute('''
             SELECT id, created_by, date, time 
             FROM slots 
@@ -450,10 +441,8 @@ def create_cancellation_keyboard(selected_day, selected_time, booking_ids=None):
         ''', (creator_id,))
         rows = cursor.fetchall()
         conn.close()
-        
         if not rows:
             return None
-        
         bookings = []
         for row in rows:
             bid, user_id, date_str, time_str = row
@@ -462,7 +451,6 @@ def create_cancellation_keyboard(selected_day, selected_time, booking_ids=None):
             except ValueError:
                 continue
             bookings.append({'id': bid})
-        
         grouped = []
         current_group = None
         for booking in bookings:
@@ -475,12 +463,9 @@ def create_cancellation_keyboard(selected_day, selected_time, booking_ids=None):
         if not grouped:
             return None
         booking_ids = grouped[0]['ids']
-    
     user_id = get_user_id_from_booking_ids(booking_ids)
-
-    # Только одна кнопка — ✅ Подтвердить отмену
     keyboard.row(
-        InlineKeyboardButton("✅ Подтвердить отмену", callback_data=f"cancel:{','.join(map(str, booking_ids))}:{user_id}")
+        InlineKeyboardButton("🚫 Подтвердить отмену", callback_data=f"cancel:{','.join(map(str, booking_ids))}:{user_id}")
     )
     
     return keyboard
