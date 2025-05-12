@@ -150,17 +150,18 @@ def notify_subscribers_for_cancellation(group, bot):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
     ids = group["ids"]
-    cursor.execute("SELECT date FROM slots WHERE id IN ({}) LIMIT 1".format(','.join('?' * len(ids))), ids)
-    result = cursor.fetchone()
-    if not result:
-        print("[Error] Не найдено записей для указанных ID.")
-        return
-    date_str = result[0]
-    query = 'SELECT time, subscribed_users FROM slots WHERE id IN ({})'.format(','.join('?' * len(ids)))
-    cursor.execute(query, ids)
+    cursor.execute("SELECT date, time, subscribed_users FROM slots WHERE id IN ({})".format(','.join('?' * len(ids))), ids)
     results = cursor.fetchall()
+    if not results:
+        print("[Error] Нет данных для указанных ID.")
+        return
+    dates = set(row[0] for row in results)
+    if len(dates) > 1:
+        date_str = "несколько дат"
+    else:
+        date_str = list(dates)[0]
     users_to_notify = {}
-    for time, subs_str in results:
+    for _, time, subs_str in results:
         if not subs_str:
             continue
         for user_id in subs_str.split(','):
@@ -310,6 +311,7 @@ def reject_booking(booking_ids):
                     booking_type = NULL, 
                     comment = NULL, 
                     contact_info = NULL, 
+                    subscribed_users = NULL
                     status = 0 
                   WHERE id IN ({placeholders})'''
         cursor.execute(query, booking_ids)
