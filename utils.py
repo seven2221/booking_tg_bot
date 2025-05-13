@@ -311,7 +311,7 @@ def reject_booking(booking_ids):
                     booking_type = NULL, 
                     comment = NULL, 
                     contact_info = NULL, 
-                    subscribed_users = NULL
+                    subscribed_users = NULL,
                     status = 0 
                   WHERE id IN ({placeholders})'''
         cursor.execute(query, booking_ids)
