@@ -286,15 +286,38 @@ def show_comment_prompt(chat_id):
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_comment')
 def handle_comment_input(message):
     chat_id = message.chat.id
-    comment = "" if message.text == "Ок" else message.text.strip()
+    if message.text == "Ок":
+        comment = ""
+    else:
+        comment = message.text.strip()
     selected_day = user_states.get(f"{chat_id}_selected_day")
     selected_time = user_states.get(f"{chat_id}_selected_time")
     hours = user_states.get(f"{chat_id}_hours")
+    start_hour = int(selected_time.split(":")[0])
+    date_obj = datetime.strptime(selected_day, "%Y-%m-%d")
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    conflict = False
+    for i in range(hours):
+        current_hour = start_hour + i
+        days_passed = current_hour // 24
+        hour_in_day = current_hour % 24
+        slot_date = (date_obj + timedelta(days=days_passed)).strftime("%Y-%m-%d")
+        slot_time = f"{hour_in_day:02d}:00"
+        cursor.execute("SELECT status FROM slots WHERE date = ? AND time = ?", (slot_date, slot_time))
+        result = cursor.fetchone()
+        if result and result[0] != 0:
+            conflict = True
+            break
+    conn.close()
+    if conflict:
+        main_bot.send_message(chat_id, "Это время уже занято другим пользователем. Пожалуйста, выберите другое время.")
+        reset_user_state(chat_id, user_states)
+        show_menu(message)
+        return
     group_name = user_states.get(f"{chat_id}_group_name")
     booking_type = user_states.get(f"{chat_id}_booking_type")
     contact_info = user_states.get(f"{chat_id}_contact_info")
-    start_hour = int(selected_time.split(":")[0])
-    date_obj = datetime.strptime(selected_day, "%Y-%m-%d")
     start_datetime = datetime.combine(date_obj.date(), datetime.min.time()).replace(hour=start_hour, minute=0)
     end_datetime = start_datetime + timedelta(hours=hours)
     end_time = f"{end_datetime.hour}:00"
