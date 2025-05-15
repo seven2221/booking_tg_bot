@@ -86,14 +86,26 @@ def handle_subscribe_day_selection(message):
         subscribe_to_free_slots(message)
         return
     chat_id = message.chat.id
-    conn = sqlite3.connect('bookings.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT time, subscribed_users FROM slots 
-        WHERE date = ? AND status IN (1, 2)  AND date >= ?
-    ''', (selected_day, today))
-    rows = cursor.fetchall()
-    conn.close()
+    now = datetime.now()
+    if selected_day == today:
+        current_hour = now.hour
+        conn = sqlite3.connect('bookings.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT time, subscribed_users FROM slots 
+            WHERE date = ? AND status IN (1, 2) AND time > ?
+        ''', (selected_day, f"{current_hour}:00"))
+        rows = cursor.fetchall()
+        conn.close()
+    else:
+        conn = sqlite3.connect('bookings.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT time, subscribed_users FROM slots 
+            WHERE date = ? AND status IN (1, 2)
+        ''', (selected_day,))
+        rows = cursor.fetchall()
+        conn.close()
     if not rows:
         main_bot.send_message(message.chat.id, "В этот день нет подходящих слотов.")
         return
@@ -148,11 +160,27 @@ def book_another_time(message):
 
 def show_free_days(message):
     free_days = get_free_days()
+    now = datetime.now()
+    current_hour = now.hour
     if not free_days:
         main_bot.send_message(message.chat.id, "Все дни заняты.")
         return
+    filtered_days = []
+    for day in free_days:
+        day_dt = datetime.strptime(day, "%Y-%m-%d")
+        if day_dt.date() == now.date():
+            schedule = get_schedule_for_day(day)
+            available_times = [t for t, b, _ in schedule if not b]
+            future_times = [t for t in available_times if int(t.split(':')[0]) > current_hour]
+            if future_times:
+                filtered_days.append(day)
+        else:
+            filtered_days.append(day)
+    if not filtered_days:
+        main_bot.send_message(message.chat.id, "Нет доступных дней.")
+        return
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(*[types.KeyboardButton(format_date(day)) for day in free_days])
+    keyboard.add(*[types.KeyboardButton(format_date(day)) for day in filtered_days])
     main_bot.send_message(message.chat.id, "Свободные дни:", reply_markup=keyboard)
     user_states[message.chat.id] = 'waiting_for_day'
 

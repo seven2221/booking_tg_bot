@@ -110,6 +110,10 @@ def handle_choose_booking_for_cancellation(message):
     if not selected_group:
         admin_bot.send_message(message.chat.id, "Бронь не найдена.")
         return
+    now = datetime.now()
+    if selected_group['start_time'] < now:
+        admin_bot.send_message(message.chat.id, "Нельзя отменить бронь, которая уже началась или закончилась.")
+        return
     user_states[admin_id].update({
         "step": "ask_notify_subscribers",
         "selected_group": selected_group
@@ -187,6 +191,7 @@ def handle_callback_query(call):
         admin_bot.answer_callback_query(call.id, "❌ Ошибка при обработке запроса.")
         return
     group_name = None
+    now = datetime.now()
     try:
         with sqlite3.connect('bookings.db') as conn:
             cursor = conn.cursor()
@@ -196,25 +201,22 @@ def handle_callback_query(call):
             rows = cursor.fetchall()
             if not rows:
                 raise Exception("Не найдено данных о слотах")
-            cursor.execute('SELECT id, status FROM slots WHERE id IN ({})'.format(
-                ','.join('?' * len(booking_ids))), booking_ids)
-            status_rows = cursor.fetchall()
-            status_set = set(status for _, status in status_rows)
-        dates = set(row[0] for row in rows)
-        times = [row[1] for row in rows]
-        group_name = rows[0][2]
-        date_str = dates.pop() if dates else "неизвестная дата"
-        if len(dates) > 1:
-            date_str = f"{date_str} и другие даты"
+            for slot_date, slot_time, _ in rows:
+                slot_datetime_str = f"{slot_date} {slot_time}"
+                slot_datetime = datetime.strptime(slot_datetime_str, "%Y-%m-%d %H:%M")
+                if slot_datetime < now:
+                    admin_bot.answer_callback_query(call.id, "⚠️ Эта бронь уже истекла.")
+                    return
+            group_name = rows[0][2]
+            dates = set(row[0] for row in rows)
+            times = [row[1] for row in rows]
+        date_str = next(iter(dates)) if dates else "неизвестная дата"
         start_time = times[0]
         end_time = times[-1]
-        try:
-            formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-        except ValueError:
-            formatted_date = "неизвестная дата"
+        formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y") if date_str else "неизвестная дата"
         confirmation_message = f"✅ Ваша бронь для группы «{group_name}» подтверждена!\nОжидаем вас {formatted_date} в {start_time} по адресу проспект Труда, 111А.\nСвязь с админом: @cyberocalypse"
         decline_message = f"❌ Ваша бронь для группы «{group_name or 'неизвестная группа'}» {formatted_date} в {start_time} отклонена по техническим причинам.\nПриносим извинения за неудобства. 😔\nПожалуйста, выберите другое время.\nСвязь с админом: @cyberocalypse"
-        cancellation_message = f"🚫 Ваша бронь для группы «{group_name or 'неизвестная группа'}» {formatted_date} в {start_time} была отменена администратором по вашей заявке.\n"
+        cancellation_message = f"🚫 Ваша бронь для группы «{group_name or 'неизвестная группа'}» {formatted_date} в {start_time} была отменена администратором по вашей заявке."
         if action == "confirm":
             confirm_booking(booking_ids)
             try:
@@ -240,15 +242,6 @@ def handle_callback_query(call):
     except Exception as e:
         print(f"[Error] Не удалось обработать callback: {e}")
         admin_bot.answer_callback_query(call.id, "❌ Ошибка при обработке брони.")
-    finally:
-        try:
-            admin_bot.edit_message_reply_markup(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                reply_markup=None
-            )
-        except Exception as e:
-            print(f"[Error] Не удалось удалить клавиатуру: {e}")
 
 if __name__ == "__main__":
     admin_bot.polling(none_stop=True)
