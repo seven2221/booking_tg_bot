@@ -142,8 +142,8 @@ def send_booking_selection_keyboard(chat_id, bookings, bot):
         end_time = group['end_time'].strftime("%H:%M")
         btn_text = f"{start_time}–{end_time}"
         markup.add(types.KeyboardButton(btn_text))
-    markup.row(types.KeyboardButton("⬅️ Выбрать другой день"))
-    markup.row(types.KeyboardButton("🏠 На главную"))
+    markup.row(types.KeyboardButton("Выбрать другой день"))
+    markup.row(types.KeyboardButton("На главную"))
     bot.send_message(chat_id, "Выберите бронь для отмены:", reply_markup=markup)
 
 def notify_subscribers_for_cancellation(group, bot):
@@ -183,18 +183,16 @@ def notify_subscribers_for_cancellation(group, bot):
             print(f"[Error] Can't notify user {user_id}: {e}")
     conn.close()
 
-def notify_booking_cancelled(user_id,bot):
+def notify_booking_cancelled(user_id, bot, group_name=None, start_time=None, end_time=None, date_formatted=None):
     try:
-        bot.send_message(int(user_id), "❌ Ваша бронь была отменена по техническим причинам.\nПриносим свои извинения за доставленные неудобства.\nСвязь с админом: @cyberocalypse")
+        message = (f"❌ Ваша бронь для группы «{group_name}» {date_formatted} с {start_time} по {end_time} была отменена по техническим причинам.\nПриносим свои извинения за доставленные неудобства.\nСвязь с админом: @cyberocalypse")
+        bot.send_message(int(user_id), message.strip())
     except Exception as e:
         print(f"[Error] Не удалось отправить уведомление пользователю {user_id}: {e}")
 
 def clear_booking_slots(slot_ids, bot):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
-    query = 'SELECT DISTINCT created_by FROM slots WHERE id IN ({})'.format(','.join('?' * len(slot_ids)))
-    cursor.execute(query, slot_ids)
-    creators = [row[0] for row in cursor.fetchall() if row[0] is not None]
     update_query = '''UPDATE slots SET 
                         user_id = NULL, 
                         group_name = NULL, 
@@ -208,8 +206,6 @@ def clear_booking_slots(slot_ids, bot):
     cursor.execute(update_query, slot_ids)
     conn.commit()
     conn.close()
-    for user_id in creators:
-        notify_booking_cancelled(user_id, bot)
 
 def get_schedule_for_day(date, user_id=None):
     conn = sqlite3.connect('bookings.db', check_same_thread=False)

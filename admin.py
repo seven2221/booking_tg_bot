@@ -6,7 +6,7 @@ import telebot
 from dotenv import load_dotenv
 from telebot import types
 
-from utils import is_admin, reset_user_state, get_grouped_unconfirmed_bookings, confirm_booking, reject_booking, format_booking_info, format_date, format_date_to_db, send_date_selection_keyboard, get_grouped_bookings_for_cancellation, send_booking_selection_keyboard, notify_subscribers_for_cancellation, clear_booking_slots
+from utils import is_admin, reset_user_state, get_grouped_unconfirmed_bookings, confirm_booking, reject_booking, format_booking_info, format_date, format_date_to_db, send_date_selection_keyboard, get_grouped_bookings_for_cancellation, send_booking_selection_keyboard, notify_subscribers_for_cancellation, clear_booking_slots, notify_booking_cancelled
 from schedule_generator import create_schedule_grid_image
 
 load_dotenv()
@@ -126,6 +126,20 @@ def handle_notify_choice(message):
     if choice == "✅ Да":
         notify_subscribers_for_cancellation(group, main_bot)
     clear_booking_slots(group["ids"], main_bot)
+    creator_id = group["user_id"]
+    group_name = group["group_name"]
+    start_time = group["start_time"].strftime("%H:%M")
+    end_time = group["end_time"].strftime("%H:%M")
+    date_str = group["start_time"].strftime("%Y-%m-%d")
+    formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+    notify_booking_cancelled(
+        user_id=creator_id,
+        bot=main_bot,
+        group_name=group_name,
+        start_time=start_time,
+        end_time=end_time,
+        date_formatted=formatted_date
+    )
     reset_user_state(admin_id, user_states)
     show_menu(message)
 
@@ -198,9 +212,9 @@ def handle_callback_query(call):
             formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
         except ValueError:
             formatted_date = "неизвестная дата"
-        confirmation_message = f"✅ Ваша бронь для группы {group_name} подтверждена!\nОжидаем вас {formatted_date} в {start_time} по адресу проспект Труда, 111А.\nСвязь с админом: @cyberocalypse"
-        decline_message = f"❌ Ваша бронь для группы {group_name or 'неизвестная группа'} {formatted_date} в {start_time} отклонена по техническим причинам.\nПриносим извинения за неудобства. 😔\nПожалуйста, выберите другое время.\nСвязь с админом: @cyberocalypse"
-        cancellation_message = f"🚫 Ваша бронь для группы {group_name or 'неизвестная группа'} {formatted_date} в {start_time} была отменена администратором по вашей заявке.\n"
+        confirmation_message = f"✅ Ваша бронь для группы «{group_name}» подтверждена!\nОжидаем вас {formatted_date} в {start_time} по адресу проспект Труда, 111А.\nСвязь с админом: @cyberocalypse"
+        decline_message = f"❌ Ваша бронь для группы «{group_name or 'неизвестная группа'}» {formatted_date} в {start_time} отклонена по техническим причинам.\nПриносим извинения за неудобства. 😔\nПожалуйста, выберите другое время.\nСвязь с админом: @cyberocalypse"
+        cancellation_message = f"🚫 Ваша бронь для группы «{group_name or 'неизвестная группа'}» {formatted_date} в {start_time} была отменена администратором по вашей заявке.\n"
         if action == "confirm":
             confirm_booking(booking_ids)
             try:
