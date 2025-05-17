@@ -51,11 +51,12 @@ def handle_cancel_booking(message):
     if not is_admin(admin_id):
         admin_bot.send_message(message.chat.id, "❌ У вас нет прав для выполнения этой операции.")
         return
+    today = datetime.now().date()
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT DISTINCT date FROM slots WHERE status IN (1, 2) ORDER BY date
-    ''')
+        SELECT DISTINCT date FROM slots WHERE status IN (1, 2) AND date >= ? ORDER BY date
+    ''', (today.strftime("%Y-%m-%d"),))
     all_dates = [row[0] for row in cursor.fetchall()]
     conn.close()
     valid_dates = []
@@ -70,7 +71,7 @@ def handle_cancel_booking(message):
     user_states[admin_id] = {"step": "choose_date_for_cancellation", "valid_dates": valid_dates}
     send_date_selection_keyboard(message.chat.id, valid_dates, admin_bot)
 
-@admin_bot.message_handler(func=lambda msg: msg.text not in ["⬅️ Назад", "🏠 На главную"] and user_states.get(msg.from_user.id, {}).get("step") == "choose_date_for_cancellation")
+@admin_bot.message_handler(func=lambda msg: msg.text not in ["Назад", "На главную"] and user_states.get(msg.from_user.id, {}).get("step") == "choose_date_for_cancellation")
 def handle_choose_date_for_cancellation(message):
     admin_id = message.from_user.id
     selected_date = format_date_to_db(message.text)
@@ -78,6 +79,11 @@ def handle_choose_date_for_cancellation(message):
         admin_bot.send_message(message.chat.id, "Выберите корректный день из предложенных.")
         return
     bookings = get_grouped_bookings_for_cancellation(selected_date)
+    today = datetime.now().date()
+    selected_date_obj = datetime.strptime(selected_date, "%Y-%m-%d").date()
+    current_hour = datetime.now().hour
+    if selected_date_obj == today:
+        bookings = [booking for booking in bookings if booking["start_time"].hour > current_hour]
     if not bookings:
         admin_bot.send_message(message.chat.id, "На этот день нет броней для отмены.")
         reset_user_state(message.chat.id, user_states)
@@ -93,18 +99,30 @@ def handle_choose_date_for_cancellation(message):
 @admin_bot.message_handler(func=lambda msg: msg.text not in ["⬅️ Выбрать другой день", "🏠 На главную"] and user_states.get(msg.from_user.id, {}).get("step") == "choose_booking_for_cancellation")
 def handle_choose_booking_for_cancellation(message):
     admin_id = message.from_user.id
-    time_range = message.text.strip().split("–")
-    if len(time_range) != 2:
+    text = message.text.strip()
+    if "–" not in text or "," not in text:
         admin_bot.send_message(message.chat.id, "Выберите корректный временной интервал.")
         return
-    start_time = time_range[0].strip()
-    end_time = time_range[1].strip()
+    time_part, group_name = text.split(",", 1)
+    time_range = time_part.strip().split("–")
+    if len(time_range) != 2:
+        admin_bot.send_message(message.chat.id, "Неверный формат временного диапазона.")
+        return
+    start_time_str = time_range[0].strip()
+    end_time_str = time_range[1].strip()
+    try:
+        start_time = datetime.strptime(start_time_str, "%H:%M").time()
+        end_time = datetime.strptime(end_time_str, "%H:%M").time()
+    except ValueError:
+        admin_bot.send_message(message.chat.id, "Ошибка распознавания времени.")
+        return
     bookings = user_states[admin_id]["bookings"]
     selected_group = None
     for group in bookings:
-        group_start = group["start_time"].strftime("%H:%M")
-        group_end = group["end_time"].strftime("%H:%M")
-        if group_start == start_time and group_end == end_time:
+        group_start = group["start_time"].time()
+        group_end = group["end_time"].time()
+        group_name_stored = group.get("group_name", "")
+        if group_start == start_time and group_end == end_time and group_name_stored.strip() == group_name.strip():
             selected_group = group
             break
     if not selected_group:
@@ -143,13 +161,13 @@ def handle_notify_choice(message):
     reset_user_state(admin_id, user_states)
     show_menu(message)
 
-@admin_bot.message_handler(func=lambda msg: msg.text == "⬅️ Выбрать другой день" and user_states.get(msg.from_user.id, {}).get("step") == "choose_booking_for_cancellation")
+@admin_bot.message_handler(func=lambda msg: msg.text == "Выбрать другой день" and user_states.get(msg.from_user.id, {}).get("step") == "choose_booking_for_cancellation")
 def handle_back_from_booking_selection(message):
     admin_id = message.from_user.id
     valid_dates = user_states[admin_id]["valid_dates"]
     send_date_selection_keyboard(message.chat.id, valid_dates)
 
-@admin_bot.message_handler(func=lambda msg: msg.text == "🏠 На главную")
+@admin_bot.message_handler(func=lambda msg: msg.text == "На главную")
 def handle_go_home(message):
     reset_user_state(message.chat.id, user_states)
     show_menu(message)

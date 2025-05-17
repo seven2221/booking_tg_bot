@@ -140,7 +140,8 @@ def send_booking_selection_keyboard(chat_id, bookings, bot):
     for idx, group in enumerate(bookings):
         start_time = group['start_time'].strftime("%H:%M")
         end_time = group['end_time'].strftime("%H:%M")
-        btn_text = f"{start_time}–{end_time}"
+        group_name = group.get('group_name', 'Без названия')
+        btn_text = f"{start_time}–{end_time}, {group_name}"
         markup.add(types.KeyboardButton(btn_text))
     markup.row(types.KeyboardButton("Выбрать другой день"))
     markup.row(types.KeyboardButton("На главную"))
@@ -240,7 +241,6 @@ def get_grouped_unconfirmed_bookings():
             ORDER BY date, time
         ''')
         rows = cursor.fetchall()
-
     bookings = []
     for row in rows:
         bid, date_str, time_str, group_name, user_id = row
@@ -317,7 +317,6 @@ def format_booking_info(group):
     start_time = group['start_time'].strftime("%H:%M")
     end_time = group['end_time'].strftime("%H:%M")
     date_str = datetime.strptime(group['date_str'], "%Y-%m-%d").strftime("%d.%m.%Y")
-
     return f"Дата: {date_str}\n"\
            f"Время: {start_time}–{end_time}\n"\
            f"Группа: {group['group_name']}\n"\
@@ -345,10 +344,8 @@ def get_free_days():
 def book_slots(date, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
     cursor = conn.cursor()
-
     start_hour = int(start_time.split(":")[0])
     date_obj = datetime.strptime(date, "%Y-%m-%d")
-
     for i in range(hours):
         current_hour = start_hour + i
         days_passed = current_hour // 24

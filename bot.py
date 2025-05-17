@@ -133,7 +133,6 @@ def handle_subscribe_time_selection(message):
         main_bot.send_message(chat_id, "Это время недоступно.")
         return
     add_subscriber_to_slot(selected_day, selected_time, chat_id)
-
     main_bot.send_message(chat_id, "Спасибо!\nМы оповестим вас, если это время освободится.")
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Оповестить про другое время"))
@@ -168,16 +167,35 @@ def handle_day_selection(message):
         main_bot.send_message(message.chat.id, "День недоступен. Попробуйте другой.")
         show_free_days(message)
         return
-    schedule = get_schedule_for_day(selected_day, message.chat.id)
-    filtered_schedule = [(t, b, g) for t, b, g in schedule if 11 <= int(t.split(':')[0]) < 24]
-    text = "\n".join([f"{t} - *{g}*" if g else f"{t} -" for t, _, g in filtered_schedule])
-    main_bot.send_message(message.chat.id, f"Расписание на {format_date(selected_day)}:\n{text}", parse_mode='Markdown')
+    chat_id = message.chat.id
+    schedule = get_schedule_for_day(selected_day, chat_id)
+    filtered_all = [(t, b, g) for t, b, g in schedule if 11 <= int(t.split(':')[0]) < 24]
+    today = datetime.now().strftime("%Y-%m-%d")
+    current_hour = datetime.now().hour
+    if selected_day == today:
+        filtered_all = [x for x in filtered_all if int(x[0].split(':')[0]) > current_hour]
+    lines = []
+    is_admin_user = is_admin(chat_id)
+    for time_str, is_booked, group_name in filtered_all:
+        if is_booked:
+            display = group_name if is_admin_user else "Занято"
+            lines.append(f"{time_str} - *{display}*")
+        else:
+            lines.append(f"{time_str} -")
+    formatted_date = datetime.strptime(selected_day, "%Y-%m-%d").strftime("%d.%m %a")
+    schedule_text = f"Расписание на {formatted_date}:\n" + "\n".join(lines)
+    main_bot.send_message(chat_id, schedule_text, parse_mode='Markdown')
+    available_times = [t for t, b, _ in filtered_all if not b]
+    if not available_times:
+        main_bot.send_message(chat_id, "На этот день нет свободного времени.")
+        show_free_days(message)
+        return
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
-    keyboard.add(*[types.KeyboardButton(t) for t, b, _ in filtered_schedule if not b])
+    keyboard.add(*[types.KeyboardButton(t) for t in available_times])
     keyboard.add(types.KeyboardButton("Выбрать другой день"))
-    main_bot.send_message(message.chat.id, "Выберите время:", reply_markup=keyboard)
-    user_states[message.chat.id] = 'waiting_for_time'
-    user_states[f"{message.chat.id}_selected_day"] = selected_day
+    main_bot.send_message(chat_id, "Выберите время:", reply_markup=keyboard)
+    user_states[chat_id] = 'waiting_for_time'
+    user_states[f"{chat_id}_selected_day"] = selected_day
 
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_time')
 def handle_time_selection(message):
@@ -376,9 +394,10 @@ def handle_cancel_booking(message):
     chat_id = message.chat.id
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
+    today = datetime.now().strftime("%Y-%m-%d")
     cursor.execute('''
         SELECT DISTINCT date FROM slots 
-        WHERE status IN (1, 2) AND created_by = ? AND date >= ?
+        WHERE status IN (1, 2) AND user_id = ? AND date >= ?
         ORDER BY date
     ''', (chat_id, today))
     all_dates = [row[0] for row in cursor.fetchall()]
@@ -401,12 +420,10 @@ def handle_cancel_booking(message):
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "choose_date_for_cancellation")
 def handle_date_chosen_for_cancellation(message):
     chat_id = message.chat.id
-
     if message.text == "На главную":
         reset_user_state(chat_id, user_states)
         show_menu(message)
         return
-
     selected_date_formatted = message.text
     try:
         selected_date = datetime.strptime(selected_date_formatted, "%Y-%m-%d").strftime("%Y-%m-%d")
@@ -417,17 +434,20 @@ def handle_date_chosen_for_cancellation(message):
             main_bot.send_message(chat_id, "Неверный формат даты. Попробуйте снова.")
             send_date_selection_keyboard(chat_id, user_states[chat_id]["valid_dates"], main_bot)
             return
-
     valid_dates = [datetime.strptime(d, "%Y-%m-%d").strftime("%Y-%m-%d") for d in user_states[chat_id]["valid_dates"]]
     if selected_date not in valid_dates:
         main_bot.send_message(chat_id, "Выберите одну из предложенных дат.")
         return
-
     bookings = get_grouped_bookings_for_cancellation(selected_date, chat_id)
+    today = datetime.now().date()
+    selected_date_obj = datetime.strptime(selected_date, "%Y-%m-%d").date()
+    current_hour = datetime.now().hour
+    if selected_date_obj == today:
+        bookings = [b for b in bookings if b["start_time"].hour > current_hour]
     if not bookings:
-        main_bot.send_message(chat_id, "На эту дату у вас нет броней.")
+        main_bot.send_message(chat_id, "На эту дату у вас нет доступных для отмены броней.")
+        send_date_selection_keyboard(chat_id, valid_dates, main_bot)
         return
-
     user_states[chat_id].update({
         "step": "choose_booking_for_cancellation",
         "selected_date": selected_date,
