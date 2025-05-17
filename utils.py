@@ -15,11 +15,6 @@ today = datetime.now().strftime("%Y-%m-%d")
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
-def is_slot_expired(slot_date, slot_time):
-    slot_str = f"{slot_date} {slot_time}"
-    slot_dt = datetime.strptime(slot_str, "%Y-%m-%d %H:%M")
-    return slot_dt < datetime.now()
-
 def reset_user_state(chat_id, user_states):
     chat_id_str = str(chat_id)
     keys_to_delete = [
@@ -152,10 +147,6 @@ def send_booking_selection_keyboard(chat_id, bookings, bot):
     bot.send_message(chat_id, "Выберите бронь для отмены:", reply_markup=markup)
 
 def notify_subscribers_for_cancellation(group, bot):
-    now = datetime.now()
-    if group_data["start_time"] < now:
-        print("[INFO] Слот уже прошёл, уведомления подписчикам не отправлены.")
-        return
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
     ids = group["ids"]
@@ -344,31 +335,12 @@ def update_booking_status(date, time, status):
     conn.close()
     
 def get_free_days():
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('bookings.db', check_same_thread=False)
     cursor = conn.cursor()
-    now = datetime.now()
-    today_str = now.strftime("%Y-%m-%d")
-    current_hour = now.hour
-    cursor.execute("SELECT DISTINCT date FROM slots WHERE status = 0 ORDER BY date")
-    all_days = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT DISTINCT date FROM slots WHERE status = 0 AND date >= ? ORDER BY date", (today,))
+    free_days = [row[0] for row in cursor.fetchall()]
     conn.close()
-    filtered_days = []
-    for day in all_days:
-        day_dt = datetime.strptime(day, "%Y-%m-%d")
-        if day_dt.date() < now.date():
-            continue
-        elif day_dt.date() == now.date():
-            conn = sqlite3.connect('bookings.db')
-            cursor = conn.cursor()
-            cursor.execute("SELECT time FROM slots WHERE date = ? AND status = 0", (day,))
-            times = [t[0] for t in cursor.fetchall()]
-            future_times = [t for t in times if int(t.split(':')[0]) > current_hour]
-            conn.close()
-            if future_times:
-                filtered_days.append(day)
-        else:
-            filtered_days.append(day)
-    return filtered_days
+    return free_days
 
 def book_slots(date, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
