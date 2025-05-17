@@ -6,7 +6,7 @@ import telebot
 from dotenv import load_dotenv
 from telebot import types
 
-from utils import is_admin, reset_user_state, get_grouped_unconfirmed_bookings, confirm_booking, reject_booking, format_booking_info, format_date, format_date_to_db, send_date_selection_keyboard, get_grouped_bookings_for_cancellation, send_booking_selection_keyboard, notify_subscribers_for_cancellation, clear_booking_slots, notify_booking_cancelled
+from utils import is_admin, reset_user_state, get_grouped_unconfirmed_bookings, confirm_booking, reject_booking, format_booking_info, format_date, format_date_to_db, send_date_selection_keyboard, get_grouped_bookings_for_cancellation, send_booking_selection_keyboard, notify_subscribers_for_cancellation, clear_booking_slots, notify_booking_cancelled, validate_input_length
 from schedule_generator import create_schedule_grid_image
 
 load_dotenv()

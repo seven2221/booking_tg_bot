@@ -35,6 +35,11 @@ def format_date_to_db(date_str):
     date_obj = datetime.strptime(f"{day_month}.{year}", "%d.%m.%Y")
     return date_obj.strftime("%Y-%m-%d")
 
+def validate_input_length(text, max_length=100):
+    if len(text.strip()) > max_length:
+        return False
+    return True
+
 def get_booked_days_filtered():
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()

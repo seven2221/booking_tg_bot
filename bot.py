@@ -9,7 +9,7 @@ from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from schedule_generator import create_schedule_grid_image
-from utils import is_admin, reset_user_state, format_date, format_date_to_db, get_schedule_for_day, get_hour_word, update_booking_status, get_free_days, book_slots, create_confirmation_keyboard, create_cancellation_keyboard, get_booked_days_filtered, add_subscriber_to_slot, get_grouped_bookings_for_cancellation, send_date_selection_keyboard
+from utils import is_admin, reset_user_state, format_date, format_date_to_db, get_schedule_for_day, get_hour_word, update_booking_status, get_free_days, book_slots, create_confirmation_keyboard, create_cancellation_keyboard, get_booked_days_filtered, add_subscriber_to_slot, get_grouped_bookings_for_cancellation, send_date_selection_keyboard, validate_input_length
 from db_init import init_db
 
 logging.basicConfig(level=logging.INFO)
@@ -258,6 +258,9 @@ def handle_hours_input(message):
 def handle_group_name_input(message):
     chat_id = message.chat.id
     group_name = message.text.strip()
+    if not validate_input_length(group_name):
+        main_bot.send_message(chat_id, f"Название группы не должно превышать 100 символов. Попробуйте снова.")
+        return
     if not group_name or re.search(r"[;'\"]|^\s*/", group_name):
         main_bot.send_message(chat_id, "Некорректное название. Попробуйте снова.")
         return
@@ -269,6 +272,9 @@ def handle_group_name_input(message):
 def handle_contact_input(message):
     chat_id = message.chat.id
     contact_info = message.text.strip()
+    if not validate_input_length(contact_info):
+        main_bot.send_message(chat_id, f"Контактная информация не должна превышать 100 символов. Попробуйте снова.")
+        return
     if not contact_info:
         main_bot.send_message(chat_id, "Контактная информация обязательна. Попробуйте снова.")
         return
@@ -292,7 +298,11 @@ def handle_booking_type_selection(message):
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_custom_booking_type')
 def handle_custom_booking_type(message):
     chat_id = message.chat.id
-    user_states[f"{chat_id}_booking_type"] = message.text.strip()
+    booking_type = message.text.strip()
+    if not validate_input_length(booking_type):
+        main_bot.send_message(chat_id, f"Тип брони не должен превышать 100 символов. Попробуйте снова.")
+        return
+    user_states[f"{chat_id}_booking_type"] = booking_type
     user_states[chat_id] = 'waiting_for_comment'
     show_comment_prompt(chat_id)
 
@@ -308,6 +318,9 @@ def handle_comment_input(message):
         comment = ""
     else:
         comment = message.text.strip()
+    if not validate_input_length(comment, 200):
+        main_bot.send_message(chat_id, f"Комментарий не должен превышать 200 символов. Попробуйте снова.")
+        return
     selected_day = user_states.get(f"{chat_id}_selected_day")
     selected_time = user_states.get(f"{chat_id}_selected_time")
     hours = user_states.get(f"{chat_id}_hours")
