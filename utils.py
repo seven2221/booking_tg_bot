@@ -162,10 +162,7 @@ def notify_subscribers_for_cancellation(group, bot):
         print("[Error] Нет данных для указанных ID.")
         return
     dates = set(row[0] for row in results)
-    if len(dates) > 1:
-        date_str = "несколько дат"
-    else:
-        date_str = list(dates)[0]
+    selected_date = list(dates)[0] if dates else "неизвестная дата"
     users_to_notify = {}
     for _, time, subs_str in results:
         if not subs_str:
@@ -178,13 +175,11 @@ def notify_subscribers_for_cancellation(group, bot):
                 users_to_notify[user_id] = []
             users_to_notify[user_id].append(time)
     for user_id, times in users_to_notify.items():
-        first = min(times)
-        last = max(times)
         try:
-            bot.send_message(
-                int(user_id),
-                f"🔔 Слот освободился:\nДата: {date_str}\nВремя: {first}–{last}"
-            )
+            formatted_date = datetime.strptime(selected_date, "%Y-%m-%d").strftime("%d.%m.%Y")
+            time_list = "\n".join(sorted(set(times)))
+            message = f"🔔 У нас освободилось время!\n{formatted_date}:\n{time_list}"
+            bot.send_message(int(user_id), message)
         except Exception as e:
             print(f"[Error] Can't notify user {user_id}: {e}")
     conn.close()
