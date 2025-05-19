@@ -287,6 +287,11 @@ def handle_contact_input(message):
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_booking_type')
 def handle_booking_type_selection(message):
     chat_id = message.chat.id
+    allowed_types = ["Репетиция", "Запись", "Другое"]
+
+    if message.text not in allowed_types:
+        main_bot.send_message(chat_id, "Пожалуйста, выберите тип брони из предложенных.")
+        return
     if message.text == "Другое":
         main_bot.send_message(chat_id, "Чем планируете заниматься?", reply_markup=types.ReplyKeyboardRemove())
         user_states[chat_id] = 'waiting_for_custom_booking_type'
