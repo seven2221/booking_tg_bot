@@ -377,9 +377,25 @@ def handle_comment_input(message):
         formatted_date = datetime.strptime(selected_day, "%Y-%m-%d").strftime("%d.%m.%Y")
     except ValueError:
         formatted_date = selected_day
-    main_bot.send_message(chat_id, f"Спасибо! 👍\nВы забронировали {hours} {get_hour_word(hours)} с {selected_time} по {end_time} {formatted_date}\nГруппа: {group_name}\nПожалуйста, ожидайте подтверждения брони администратором.", parse_mode='Markdown')
-    mention = f"[{message.from_user.first_name}](tg://user?id={message.from_user.id})"
-    note = f"🔔 Новая бронь!\nДата: {selected_day}\nВремя: {selected_time}-{end_time}\nГруппа: {group_name}\nТип: {booking_type}\nКомментарий: {comment}\nКонтакт: {contact_info}\nСоздатель: {mention}"
+    main_bot.send_message(chat_id, f"Спасибо! 👍\nВы забронировали *{hours}* {get_hour_word(hours)} с *{selected_time} по {end_time}* *{formatted_date}*\nГруппа: *{group_name}*\nПожалуйста, ожидайте подтверждения брони администратором.", parse_mode='Markdown')
+    if message.from_user.username:
+        mention = f"@{message.from_user.username}"
+    elif contact_info.startswith('@'):
+        mention = contact_info
+    elif contact_info.replace('+', '').isdigit():
+        mention = f"[{message.from_user.first_name}](tel:{contact_info})"
+    else:
+        mention = f"{message.from_user.first_name} (ID: {message.from_user.id})"
+    note = (
+        f"🔔 *Новая бронь!*\n"
+        f"_Дата:_ *{selected_day}*\n"
+        f"_Время:_ *{selected_time}-{end_time}*\n"
+        f"_Группа:_ *{group_name}*\n"
+        f"_Тип:_ *{booking_type}*\n"
+        f"_Комментарий:_ {comment}\n"
+        f"_Контакт:_ {contact_info}\n"
+        f"_Создатель:_ {mention}"
+    )
     for admin_id in ADMIN_IDS:
         try:
             admin_bot.send_message(
@@ -515,13 +531,20 @@ def handle_user_choose_booking_for_cancellation(message):
         formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
     except ValueError:
         formatted_date = date_str
-    mention = f"[{message.from_user.first_name}](tg://user?id={chat_id})"
+    if message.from_user.username:
+        mention = f"@{message.from_user.username}"
+    elif contact_info.startswith('@'):
+        mention = contact_info
+    elif contact_info.replace('+', '').isdigit():
+        mention = f"[{message.from_user.first_name}](tel:{contact_info})"
+    else:
+        mention = f"{message.from_user.first_name} (ID: {message.from_user.id})"
     note = (
-        f"🔔 Запрос на отмену брони!\n"
-        f"Дата: {date_str}\n"
-        f"Время: {start_time}–{end_time}\n"
-        f"Группа: {group_name}\n"
-        f"Создатель: {mention}"
+        f"🚫 *Запрос на отмену брони!*\n"
+        f"_Дата:_ *{date_str}*\n"
+        f"_Время:_ *{start_time}–{end_time}*\n"
+        f"_Группа:_ *{group_name}*\n"
+        f"_Создатель:_ *{mention}*"
     )
     for admin_id in ADMIN_IDS:
         try:
@@ -533,7 +556,7 @@ def handle_user_choose_booking_for_cancellation(message):
             )
         except Exception as e:
             print(f"[Error] Can't send cancellation request to admin {admin_id}: {e}")
-    main_bot.send_message(chat_id, "Запрос на отмену брони отправлен администратору. Ожидайте подтверждения.")
+    main_bot.send_message(chat_id, "Запрос на отмену брони отправлен администратору. Пожалуйста, ожидайте подтверждения.")
     show_menu(message)
 
 
