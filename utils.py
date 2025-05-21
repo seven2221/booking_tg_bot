@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 
 from dotenv import load_dotenv
@@ -35,10 +36,19 @@ def format_date_to_db(date_str):
     date_obj = datetime.strptime(f"{day_month}.{year}", "%d.%m.%Y")
     return date_obj.strftime("%Y-%m-%d")
 
-def validate_input_length(text, max_length=100):
-    if len(text.strip()) > max_length:
+def validate_input(value, max_length=100):
+    if not value:
+        return False
+    if len(value) > max_length:
+        return False
+    if re.search(r"[;'\"\\/*]|^\s*/", value):
         return False
     return True
+
+# def validate_input_length(text, max_length=100):
+#     if len(text.strip()) > max_length:
+#         return False
+#     return True
 
 def get_booked_days_filtered():
     conn = sqlite3.connect('bookings.db')
