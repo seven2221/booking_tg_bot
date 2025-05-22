@@ -73,11 +73,15 @@ def subscribe_to_free_slots(message):
         return
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(*[types.KeyboardButton(format_date(day)) for day in booked_days])
+    keyboard.add(types.KeyboardButton("На главную"))
     main_bot.send_message(message.chat.id, "Выберите день:", reply_markup=keyboard)
     user_states[message.chat.id] = 'waiting_for_subscribe_day'
 
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_subscribe_day')
 def handle_subscribe_day_selection(message):
+    if message.text == "На главную":
+        return_to_main_menu(message)
+        return
     try:
         selected_day = datetime.strptime(message.text.split()[0], '%d.%m').replace(year=datetime.now().year).strftime('%Y-%m-%d')
     except ValueError:
@@ -120,6 +124,9 @@ def handle_subscribe_time_selection(message):
         reset_user_state(chat_id, user_states)
         subscribe_to_free_slots(message)
         return
+    if message.text == "На главную":
+        return_to_main_menu(message)
+        return
     selected_time = message.text.strip()
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
@@ -133,10 +140,12 @@ def handle_subscribe_time_selection(message):
         main_bot.send_message(chat_id, "Это время недоступно.")
         return
     add_subscriber_to_slot(selected_day, selected_time, chat_id)
-    main_bot.send_message(chat_id, "Спасибо!\nМы оповестим вас, если это время освободится.")
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(types.KeyboardButton("Оповестить про другое время"))
-    keyboard.add(types.KeyboardButton("Вернуться на главную"))
+    main_bot.send_message(chat_id, "Спасибо! Мы оповестим вас, если это время освободится.")
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    keyboard.row(
+        types.KeyboardButton("Оповестить про другое время"),
+        types.KeyboardButton("Вернуться на главную")
+    )
     main_bot.send_message(chat_id, "Продолжить?", reply_markup=keyboard)
     reset_user_state(chat_id, user_states)
 
@@ -152,11 +161,15 @@ def show_free_days(message):
         return
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(*[types.KeyboardButton(format_date(day)) for day in free_days])
+    keyboard.add(types.KeyboardButton("На главную"))
     main_bot.send_message(message.chat.id, "Свободные дни:", reply_markup=keyboard)
     user_states[message.chat.id] = 'waiting_for_day'
 
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_day')
 def handle_day_selection(message):
+    if message.text == "На главную":
+        return_to_main_menu(message)
+        return
     try:
         selected_day = datetime.strptime(message.text.split()[0], '%d.%m').replace(year=datetime.now().year).strftime('%Y-%m-%d')
     except ValueError:
@@ -446,8 +459,7 @@ def handle_cancel_booking(message):
 def handle_date_chosen_for_cancellation(message):
     chat_id = message.chat.id
     if message.text == "На главную":
-        reset_user_state(chat_id, user_states)
-        show_menu(message)
+        return_to_main_menu(message)
         return
     selected_date_formatted = message.text
     try:
@@ -464,21 +476,23 @@ def handle_date_chosen_for_cancellation(message):
         main_bot.send_message(chat_id, "Выберите одну из предложенных дат.")
         return
     bookings = get_grouped_bookings_for_cancellation(selected_date, chat_id)
-    today = datetime.now().date()
-    selected_date_obj = datetime.strptime(selected_date, "%Y-%m-%d").date()
-    current_hour = datetime.now().hour
-    if selected_date_obj == today:
-        bookings = [b for b in bookings if b["start_time"].hour > current_hour]
-    if not bookings:
-        main_bot.send_message(chat_id, "На эту дату у вас нет доступных для отмены броней.")
-        send_date_selection_keyboard(chat_id, valid_dates, main_bot)
+    now = datetime.now()
+    deadline = now + timedelta(hours=24)
+    filtered_bookings = []
+    for booking in bookings:
+        booking_start = datetime.strptime(f"{booking['date_str']} {booking['start_time'].strftime('%H:%M')}", "%Y-%m-%d %H:%M")
+        if booking_start > deadline:
+            filtered_bookings.append(booking)
+    if not filtered_bookings:
+        main_bot.send_message(chat_id, "У вас нет броней, доступных для отмены в этот день.\nОтмена возможна только более чем за 24 часа до начала брони.")
+        send_date_selection_keyboard(chat_id, user_states[chat_id]["valid_dates"], main_bot)
         return
     user_states[chat_id].update({
         "step": "choose_booking_for_cancellation",
         "selected_date": selected_date,
-        "bookings": bookings
+        "bookings": filtered_bookings
     })
-    send_cancellation_options(chat_id, bookings)
+    send_cancellation_options(chat_id, filtered_bookings)
 
 def send_cancellation_options(chat_id, bookings):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -487,15 +501,22 @@ def send_cancellation_options(chat_id, bookings):
         end_time = booking['end_time'].strftime("%H:%M")
         group_name = booking['group_name']
         markup.add(types.KeyboardButton(f"{start_time}–{end_time}, {group_name}"))
-    markup.add(types.KeyboardButton("На главную"))
+    row = [
+        types.KeyboardButton("Выбрать другой день"),
+        types.KeyboardButton("На главную")
+    ]
+    markup.row(*row)
     main_bot.send_message(chat_id, "Выберите бронь для отмены:", reply_markup=markup)
 
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "choose_booking_for_cancellation")
 def handle_user_choose_booking_for_cancellation(message):
     chat_id = message.chat.id
     if message.text == "На главную":
-        reset_user_state(chat_id, user_states)
-        show_menu(message)
+        return_to_main_menu(message)
+        return
+    if message.text == "Выбрать другой день":
+        user_states[chat_id]["step"] = "choose_date_for_cancellation"
+        send_date_selection_keyboard(chat_id, user_states[chat_id]["valid_dates"], main_bot)
         return
     selected_text = message.text.strip()
     bookings = user_states[chat_id].get("bookings", [])
@@ -549,7 +570,6 @@ def handle_user_choose_booking_for_cancellation(message):
             print(f"[Error] Can't send cancellation request to admin {admin_id}: {e}")
     main_bot.send_message(chat_id, "Запрос на отмену брони отправлен администратору. Пожалуйста, ожидайте подтверждения.")
     show_menu(message)
-
 
 if __name__ == "__main__":
     init_db()
