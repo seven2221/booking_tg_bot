@@ -23,7 +23,6 @@ main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 
 user_states = {}
-today = datetime.now().strftime("%Y-%m-%d")
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Посмотреть прайс")
 def show_price_list(message):
@@ -41,8 +40,8 @@ def show_menu(message):
     keyboard.add(types.KeyboardButton("Посмотреть расписание"))
     keyboard.add(types.KeyboardButton("Забронировать время"))
     keyboard.add(types.KeyboardButton("Отменить бронь"))
-    keyboard.add(types.KeyboardButton("Посмотреть прайс"))
     keyboard.add(types.KeyboardButton("Быть в курсе, если освободится время"))
+    keyboard.add(types.KeyboardButton("Посмотреть прайс"))
     main_bot.send_message(message.chat.id, "Выберите действие:", reply_markup=keyboard)
     reset_user_state(message.chat.id, user_states)
 
@@ -88,10 +87,11 @@ def handle_subscribe_day_selection(message):
     chat_id = message.chat.id
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
+    current_date = datetime.now().strftime("%Y-%m-%d")
     cursor.execute('''
         SELECT time, subscribed_users FROM slots 
         WHERE date = ? AND status IN (1, 2)  AND date >= ?
-    ''', (selected_day, today))
+    ''', (selected_day, current_date))
     rows = cursor.fetchall()
     conn.close()
     if not rows:
@@ -182,7 +182,7 @@ def handle_day_selection(message):
             lines.append(f"{time_str} - *{display}*")
         else:
             lines.append(f"{time_str} -")
-    formatted_date = datetime.strptime(selected_day, "%Y-%m-%d").strftime("%d.%m %a")
+    formatted_date = format_date(selected_day)
     schedule_text = f"Расписание на {formatted_date}:\n" + "\n".join(lines)
     main_bot.send_message(chat_id, schedule_text, parse_mode='Markdown')
     available_times = [t for t, b, _ in filtered_all if not b]
@@ -365,7 +365,7 @@ def handle_comment_input(message):
             booking_ids.append(row[0])
     conn.close()
     try:
-        formatted_date = datetime.strptime(selected_day, "%Y-%m-%d").strftime("%d.%m.%Y")
+        formatted_date = format_date(selected_day).replace(" ", ".")[:-3]
     except ValueError:
         formatted_date = selected_day
     main_bot.send_message(chat_id, f"Спасибо! 👍\nВы забронировали *{hours}* {get_hour_word(hours)} с *{selected_time} по {end_time}* *{formatted_date}*\nГруппа: *{group_name}*\nПожалуйста, ожидайте подтверждения брони администратором.", parse_mode='Markdown')
@@ -519,7 +519,7 @@ def handle_user_choose_booking_for_cancellation(message):
     date_str = selected_booking["date_str"]
     group_name = selected_booking["group_name"]
     try:
-        formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+        formatted_date = format_date(date_str).replace(" ", ".")[:-3]
     except ValueError:
         formatted_date = date_str
     if message.from_user.username:

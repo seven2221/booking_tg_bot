@@ -11,8 +11,6 @@ load_dotenv()
 
 ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 
-today = datetime.now().strftime("%Y-%m-%d")
-
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
@@ -45,15 +43,11 @@ def validate_input(value, max_length=100):
         return False
     return True
 
-# def validate_input_length(text, max_length=100):
-#     if len(text.strip()) > max_length:
-#         return False
-#     return True
-
 def get_booked_days_filtered():
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT date FROM slots WHERE time >= '11:00' AND status IN (1, 2)  AND date >= ?", (today,))
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    cursor.execute("SELECT DISTINCT date FROM slots WHERE time >= '11:00' AND status IN (1, 2)  AND date >= ?", (current_date,))
     days = [row[0] for row in cursor.fetchall()]
     conn.close()
     return days
@@ -344,10 +338,20 @@ def update_booking_status(date, time, status):
     conn.close()
     
 def get_free_days():
-    conn = sqlite3.connect('bookings.db', check_same_thread=False)
+    conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT date FROM slots WHERE status = 0 AND date >= ? ORDER BY date", (today,))
-    free_days = [row[0] for row in cursor.fetchall()]
+    today = datetime.now().date()
+    date_list = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(28)]
+    free_days = []
+    for date_str in date_list:
+        cursor.execute('''
+            SELECT COUNT(*) FROM slots 
+            WHERE date = ? AND status != 0
+        ''', (date_str,))
+        result = cursor.fetchone()
+        if result[0] == 0 or result[0] < 13:
+            free_days.append(date_str)
+    
     conn.close()
     return free_days
 
