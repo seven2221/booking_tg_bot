@@ -319,14 +319,33 @@ def handle_custom_booking_type(message):
     show_comment_prompt(chat_id)
 
 def show_comment_prompt(chat_id):
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add("Ок")
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    keyboard.row(
+        types.KeyboardButton("Прайс"),
+        types.KeyboardButton("Ок")
+    )
     main_bot.send_message(chat_id, "Если вам необходимы какие-либо дополнительные услуги из нашего прайса, пожалуйста, укажите их в комментарии.\n\nЕсли доп.услуги не требуются, нажмите 'Ок'.", reply_markup=keyboard)
+
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_comment' and msg.text == "Прайс")
+def show_price_list_during_booking(message):
+    chat_id = message.chat.id
+    try:
+        with open('price.txt', 'r', encoding='utf-8') as file:
+            price_list = file.read().strip()
+    except FileNotFoundError:
+        price_list = "Информация о прайсе временно недоступна."
+    main_bot.send_message(chat_id, price_list)
+    show_comment_prompt(chat_id)
 
 @main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id) == 'waiting_for_comment')
 def handle_comment_input(message):
     chat_id = message.chat.id
-    comment = message.text.strip()
+    if message.text == "Прайс":
+        return
+    if message.text == "Ок":
+        comment = ""
+    else:
+        comment = message.text.strip()
     if comment and not validate_input(comment, max_length=200):
         main_bot.send_message(chat_id, "Комментарий не должен превышать 200 символов и содержать символы: /, \, *, \". Попробуйте снова.")
         return
@@ -381,7 +400,14 @@ def handle_comment_input(message):
         formatted_date = format_date(selected_day).replace(" ", ".")[:-3]
     except ValueError:
         formatted_date = selected_day
-    main_bot.send_message(chat_id, f"Спасибо! 👍\nВы забронировали *{hours}* {get_hour_word(hours)} с *{selected_time} по {end_time}* *{formatted_date}*\nГруппа: *{group_name}*\nПожалуйста, ожидайте подтверждения брони администратором.", parse_mode='Markdown')
+    main_bot.send_message(
+        chat_id,
+        f"Спасибо! 👍\n"
+        f"Вы забронировали *{hours}* {get_hour_word(hours)} с *{selected_time} по {end_time}* *{formatted_date}*\n"
+        f"Группа: *{group_name}*\n"
+        f"Пожалуйста, ожидайте подтверждения брони администратором.",
+        parse_mode='Markdown'
+    )
     if message.from_user.username:
         mention = f"@{message.from_user.username}"
     elif contact_info.startswith('@'):
