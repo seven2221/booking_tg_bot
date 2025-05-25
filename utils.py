@@ -341,17 +341,25 @@ def get_free_days():
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
     today = datetime.now().date()
+    now_time = datetime.now()
     date_list = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(28)]
     free_days = []
     for date_str in date_list:
-        cursor.execute('''
-            SELECT COUNT(*) FROM slots 
-            WHERE date = ? AND status != 0
-        ''', (date_str,))
+        is_today = date_str == today.strftime("%Y-%m-%d")
+        if is_today:
+            current_hour = now_time.hour
+            cursor.execute('''
+                SELECT COUNT(*) FROM slots 
+                WHERE date = ? AND status != 0 AND time >= ?
+            ''', (date_str, f"{current_hour:02d}:00"))
+        else:
+            cursor.execute('''
+                SELECT COUNT(*) FROM slots 
+                WHERE date = ? AND status != 0
+            ''', (date_str,))
         result = cursor.fetchone()
         if result[0] == 0 or result[0] < 13:
             free_days.append(date_str)
-    
     conn.close()
     return free_days
 
