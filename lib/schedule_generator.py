@@ -1,8 +1,8 @@
-from datetime import datetime
 import sqlite3
+from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
-from utils import is_admin, format_date, get_schedule_for_day
-
+from lib.utils import is_admin, format_date
+from lib.schedule_tasks import get_schedule_for_day
 
 def create_schedule_grid_image(requester_id=None, days_to_show=28):
     today = datetime.now().strftime("%Y-%m-%d")

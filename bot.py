@@ -7,10 +7,11 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-from schedule_generator import create_schedule_grid_image
-from utils import is_admin, reset_user_state, format_date, format_date_to_db, get_schedule_for_day, get_hour_word, update_booking_status, get_free_days, book_slots, create_confirmation_keyboard, create_cancellation_keyboard, get_booked_days_filtered, add_subscriber_to_slot, get_grouped_bookings_for_cancellation, send_date_selection_keyboard, validate_input
-from db_init import init_db
+from lib.schedule_generator import create_schedule_grid_image
+from lib.utils import is_admin, reset_user_state, format_date, format_date_to_db, get_hour_word, update_booking_status, book_slots, validate_input
+from lib.schedule_tasks import get_booked_days_filtered, add_subscriber_to_slot, get_grouped_bookings_for_cancellation, get_schedule_for_day, get_free_days
+from lib.keyboards import create_confirmation_keyboard, create_cancellation_keyboard, send_date_selection_keyboard
+from lib.db_init import init_db
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
