@@ -81,6 +81,146 @@ def get_free_days():
     conn.close()
     return free_days
 
+def get_daily_schedule_from_db(date):
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT time, status, group_name, booking_type, comment 
+        FROM slots 
+        WHERE date = ? 
+        ORDER BY time
+    ''', (date,))
+    rows = cursor.fetchall()
+    conn.close()
+    schedule = []
+    for row in rows:
+        time, status, group_name, booking_type, comment = row
+        schedule.append({
+            "time": time,
+            "status": status,
+            "group_name": group_name if status > 0 else "",
+            "booking_type": booking_type if status > 0 else "",
+            "comment": comment if status > 0 else ""
+        })
+    return schedule
+
+
+def prepare_daily_schedule_data(date):
+    raw_slots = get_daily_schedule_from_db(date)
+    grouped_slots = []
+    current_group = None
+    for slot in raw_slots:
+        if slot["group_name"]:
+            if not current_group:
+                current_group = {
+                    "start_time": slot["time"],
+                    "end_time": slot["time"],
+                    "group_name": slot["group_name"],
+                    "booking_type": slot["booking_type"],
+                    "comment": slot["comment"]
+                }
+            elif (current_group["group_name"] == slot["group_name"] and
+                  current_group["booking_type"] == slot["booking_type"] and
+                  current_group["comment"] == slot["comment"]):
+                current_group["end_time"] = slot["time"]
+            else:
+                grouped_slots.append(current_group)
+                current_group = {
+                    "start_time": slot["time"],
+                    "end_time": slot["time"],
+                    "group_name": slot["group_name"],
+                    "booking_type": slot["booking_type"],
+                    "comment": slot["comment"]
+                }
+        else:
+            if current_group:
+                grouped_slots.append(current_group)
+                current_group = None
+            grouped_slots.append(slot)
+    if current_group:
+        grouped_slots.append(current_group)
+    final_schedule = []
+    for slot in grouped_slots:
+        if "time" not in slot:
+            slot["time"] = slot.get("start_time", "") or slot.get("end_time", "")
+        final_schedule.append(slot)
+    return final_schedule
+
+def get_grouped_daily_bookings(date):
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    prev_day = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    next_day = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    query = '''
+        SELECT id, date, time, group_name, created_by, booking_type, comment 
+        FROM slots
+        WHERE date IN (?, ?, ?)
+          AND status IN (1, 2)
+        ORDER BY date, time
+    '''
+    params = [prev_day, date, next_day]
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    bookings = []
+    for row in rows:
+        bid, date_str, time_str, group_name, user_id, booking_type, comment = row
+        try:
+            dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        bookings.append({
+            'id': bid,
+            'datetime': dt,
+            'date_str': date_str,
+            'time_str': time_str,
+            'group_name': group_name,
+            'user_id': user_id,
+            'booking_type': booking_type,
+            'comment': comment
+        })
+    grouped = []
+    current_group = None
+    for booking in bookings:
+        if not current_group:
+            current_group = {
+                'start_time': booking['datetime'],
+                'end_time': booking['datetime'] + timedelta(hours=1),
+                'ids': [booking['id']],
+                'group_name': booking['group_name'],
+                'user_id': booking['user_id'],
+                'booking_type': booking['booking_type'],
+                'comment': booking['comment'],
+                'date_str': booking['date_str']
+            }
+        else:
+            if (
+                booking['group_name'] == current_group['group_name'] and
+                booking['user_id'] == current_group['user_id'] and
+                booking['datetime'] == current_group['end_time']
+            ):
+                current_group['end_time'] += timedelta(hours=1)
+                current_group['ids'].append(booking['id'])
+            else:
+                grouped.append(current_group)
+                current_group = {
+                    'start_time': booking['datetime'],
+                    'end_time': booking['datetime'] + timedelta(hours=1),
+                    'ids': [booking['id']],
+                    'group_name': booking['group_name'],
+                    'user_id': booking['user_id'],
+                    'booking_type': booking['booking_type'],
+                    'comment': booking['comment'],
+                    'date_str': booking['date_str']
+                }
+    if current_group:
+        grouped.append(current_group)
+    filtered_grouped = [
+        g for g in grouped
+        if g['start_time'].strftime("%Y-%m-%d") == date
+    ]
+    return filtered_grouped
+
 def get_grouped_unconfirmed_bookings():
     with sqlite3.connect('bookings.db') as conn:
         cursor = conn.cursor()

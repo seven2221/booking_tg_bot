@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import sqlite3
 import telebot
 import logging
@@ -511,7 +512,7 @@ def handle_date_chosen_for_cancellation(message):
         if booking_start > deadline:
             filtered_bookings.append(booking)
     if not filtered_bookings:
-        main_bot.send_message(chat_id, "У вас нет броней, доступных для отмены в этот день.\nОтмена возможна только более чем за 24 часа до начала брони.")
+        main_bot.send_message(chat_id, "У вас нет броней, доступных для отмены в этот день.\nОтмена возможна только более чем за 24 часа до начала брони.\n\nПожалуйста, свяжитесь с админом: @cyberocalypse")
         send_date_selection_keyboard(chat_id, user_states[chat_id]["valid_dates"], main_bot)
         return
     user_states[chat_id].update({
@@ -599,5 +600,6 @@ def handle_user_choose_booking_for_cancellation(message):
     show_menu(message)
 
 if __name__ == "__main__":
-    init_db()
+    if not os.path.exists('bookings.db'):
+        init_db()
     main_bot.polling(none_stop=True)

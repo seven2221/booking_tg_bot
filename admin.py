@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from telebot import types
 from lib.utils import is_admin, reset_user_state, confirm_booking, reject_booking, format_booking_info, format_date, format_date_to_db, validate_input
 from lib.schedule_tasks import get_grouped_bookings_for_cancellation, clear_booking_slots, get_grouped_unconfirmed_bookings
-from lib.schedule_generator import create_schedule_grid_image
+from lib.schedule_generator import create_schedule_grid_image, create_daily_schedule_image
 from lib.keyboards import send_booking_selection_keyboard, send_date_selection_keyboard
 from lib.notifiers import notify_subscribers_for_cancellation, notify_booking_cancelled
 
@@ -39,10 +39,33 @@ def handle_start(message):
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "Посмотреть расписание")
 def view_schedule(message):
-    path = create_schedule_grid_image(message.chat.id)
-    with open(path, "rb") as img:
-        admin_bot.send_photo(message.chat.id, img, caption="Расписание на ближайшие дни:")
-    os.remove(path)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(types.KeyboardButton("Расписание на 28 дней"))
+    markup.add(types.KeyboardButton("Расписание на сегодня"))
+    admin_bot.send_message(message.chat.id, "Выберите тип расписания:", reply_markup=markup)
+    reset_user_state(message.chat.id, user_states)
+
+@admin_bot.message_handler(func=lambda msg: msg.text == "Расписание на 28 дней")
+def view_28_days_schedule(message):
+    path = create_schedule_grid_image(message.chat.id, days_to_show=28)
+    if path:
+        with open(path, "rb") as img:
+            admin_bot.send_photo(message.chat.id, img, caption="Расписание на ближайшие 28 дней:")
+        os.remove(path)
+    else:
+        admin_bot.send_message(message.chat.id, "Нет данных для отображения расписания.")
+    reset_user_state(message.chat.id, user_states)
+    show_menu(message)
+
+@admin_bot.message_handler(func=lambda msg: msg.text == "Расписание на сегодня")
+def view_today_schedule(message):
+    path = create_daily_schedule_image(message.chat.id)
+    if path:
+        with open(path, "rb") as img:
+            admin_bot.send_photo(message.chat.id, img, caption="Расписание на сегодня:")
+        os.remove(path)
+    else:
+        admin_bot.send_message(message.chat.id, "Нет данных для отображения расписания на сегодня.")
     reset_user_state(message.chat.id, user_states)
     show_menu(message)
 

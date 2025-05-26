@@ -58,15 +58,6 @@ def get_user_id_from_booking_ids(booking_ids):
         result = cursor.fetchone()
         return result[0] if result else None
 
-
-
-
-
-
-
-
-
-
 def confirm_booking(booking_ids):
     with sqlite3.connect('bookings.db') as conn:
         cursor = conn.cursor()
@@ -111,7 +102,6 @@ def update_booking_status(date, time, status):
     ''', (status, date, time))
     conn.commit()
     conn.close()
-
 
 def book_slots(date, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
