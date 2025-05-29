@@ -27,7 +27,7 @@ def send_date_selection_keyboard(chat_id, dates, bot):
 def create_confirmation_keyboard(selected_day, selected_time, booking_ids=None):
     keyboard = InlineKeyboardMarkup()
     if not booking_ids:
-        conn = sqlite3.connect('bookings.db')
+        conn = sqlite3.connect('db/bookings.db')
         cursor = conn.cursor()
         cursor.execute('SELECT created_by FROM slots WHERE date = ? AND time = ?', (selected_day, selected_time))
         creator_row = cursor.fetchone()
@@ -70,7 +70,7 @@ def create_confirmation_keyboard(selected_day, selected_time, booking_ids=None):
 def create_cancellation_keyboard(selected_day, selected_time, booking_ids=None):
     keyboard = InlineKeyboardMarkup()
     if not booking_ids:
-        conn = sqlite3.connect('bookings.db')
+        conn = sqlite3.connect('db/bookings.db')
         cursor = conn.cursor()
         cursor.execute('SELECT created_by FROM slots WHERE date = ? AND time = ?', (selected_day, selected_time))
         creator_row = cursor.fetchone()

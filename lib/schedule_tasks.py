@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from lib.utils import is_admin
 
 def get_booked_days_filtered():
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     current_date = datetime.now().strftime("%Y-%m-%d")
     cursor.execute("SELECT DISTINCT date FROM slots WHERE time >= '11:00' AND status IN (1, 2)  AND date >= ?", (current_date,))
@@ -12,7 +12,7 @@ def get_booked_days_filtered():
     return days
 
 def add_subscriber_to_slot(date, time, user_id):
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     cursor.execute("SELECT subscribed_users FROM slots WHERE date = ? AND time = ?", (date, time))
     result = cursor.fetchone()
@@ -25,7 +25,7 @@ def add_subscriber_to_slot(date, time, user_id):
     conn.close()
 
 def clear_booking_slots(slot_ids, bot):
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     update_query = "UPDATE slots SET user_id = NULL, group_name = NULL, created_by = NULL, booking_type = NULL, comment = NULL, contact_info = NULL, status = 0, subscribed_users = NULL WHERE id IN ({})".format(','.join('?' * len(slot_ids)))
     cursor.execute(update_query, slot_ids)
@@ -33,7 +33,7 @@ def clear_booking_slots(slot_ids, bot):
     conn.close()
 
 def get_schedule_for_day(date, user_id=None):
-    conn = sqlite3.connect('bookings.db', check_same_thread=False)
+    conn = sqlite3.connect('db/bookings.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("SELECT time, status, group_name FROM slots WHERE date = ? ORDER BY time", (date,))
     schedule = []
@@ -47,7 +47,7 @@ def get_schedule_for_day(date, user_id=None):
     return schedule
 
 def get_free_days():
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     today = datetime.now().date()
     now_time = datetime.now()
@@ -67,7 +67,7 @@ def get_free_days():
     return free_days
 
 def get_daily_schedule_from_db(date):
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     cursor.execute("SELECT time, status, group_name, booking_type, comment FROM slots WHERE date = ? ORDER BY time", (date,))
     rows = cursor.fetchall()
@@ -126,7 +126,7 @@ def prepare_daily_schedule_data(date):
     return final_schedule
 
 def get_grouped_daily_bookings(date):
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     prev_day = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
     next_day = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -195,7 +195,7 @@ def get_grouped_daily_bookings(date):
     return filtered_grouped
 
 def get_grouped_unconfirmed_bookings():
-    with sqlite3.connect('bookings.db') as conn:
+    with sqlite3.connect('db/bookings.db') as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, date, time, group_name, created_by FROM slots WHERE status = 1 ORDER BY date, time")
         rows = cursor.fetchall()
@@ -247,7 +247,7 @@ def get_grouped_unconfirmed_bookings():
     return grouped
 
 def get_grouped_bookings_for_cancellation(date, created_by=None):
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     prev_day = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
     next_day = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")

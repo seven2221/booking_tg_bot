@@ -2,7 +2,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 def init_db():
-    conn = sqlite3.connect('bookings.db', check_same_thread=False)
+    conn = sqlite3.connect('db/bookings.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS slots (

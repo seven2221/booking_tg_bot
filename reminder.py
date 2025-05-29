@@ -11,7 +11,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 def send_reminders():
     try:
-        conn = sqlite3.connect('bookings.db')
+        conn = sqlite3.connect('db/bookings.db')
         cursor = conn.cursor()
         now = datetime.now()
         notification_times = [

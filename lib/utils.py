@@ -51,7 +51,7 @@ def get_hour_word(hours):
         return "часов"
 
 def get_user_id_from_booking_ids(booking_ids):
-    with sqlite3.connect('bookings.db') as conn:
+    with sqlite3.connect('db/bookings.db') as conn:
         cursor = conn.cursor()
         query = 'SELECT created_by FROM slots WHERE id IN ({})'.format(','.join('?' * len(booking_ids)))
         cursor.execute(query, booking_ids)
@@ -59,7 +59,7 @@ def get_user_id_from_booking_ids(booking_ids):
         return result[0] if result else None
 
 def confirm_booking(booking_ids):
-    with sqlite3.connect('bookings.db') as conn:
+    with sqlite3.connect('db/bookings.db') as conn:
         cursor = conn.cursor()
         placeholders = ','.join('?' * len(booking_ids))
         query = f'UPDATE slots SET status = 2 WHERE id IN ({placeholders})'
@@ -67,7 +67,7 @@ def confirm_booking(booking_ids):
         conn.commit()
 
 def reject_booking(booking_ids):
-    with sqlite3.connect('bookings.db') as conn:
+    with sqlite3.connect('db/bookings.db') as conn:
         cursor = conn.cursor()
         placeholders = ','.join('?' * len(booking_ids))
         query = f'UPDATE slots SET user_id = NULL, group_name = NULL, created_by = NULL, booking_type = NULL, comment = NULL, contact_info = NULL, subscribed_users = NULL, status = 0 WHERE id IN ({placeholders})'
@@ -84,14 +84,14 @@ def format_booking_info(group):
            f"Контакт: @{group['user_id']}"
 
 def update_booking_status(date, time, status):
-    conn = sqlite3.connect('bookings.db', check_same_thread=False)
+    conn = sqlite3.connect('db/bookings.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('UPDATE slots SET status = ? WHERE date = ? AND time = ?', (status, date, time))
     conn.commit()
     conn.close()
 
 def book_slots(date, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
-    conn = sqlite3.connect('bookings.db', check_same_thread=False)
+    conn = sqlite3.connect('db/bookings.db', check_same_thread=False)
     cursor = conn.cursor()
     start_hour = int(start_time.split(":")[0])
     date_obj = datetime.strptime(date, "%Y-%m-%d")

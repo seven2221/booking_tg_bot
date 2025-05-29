@@ -2,7 +2,7 @@ import sqlite3
 from datetime import datetime
 
 def notify_subscribers_for_cancellation(group, bot):
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     ids = group["ids"]
     cursor.execute("SELECT date, time, subscribed_users FROM slots WHERE id IN ({})".format(','.join('?' * len(ids))), ids)

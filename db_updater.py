@@ -2,7 +2,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 def update_slots():
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     seven_days_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
     cursor.execute('DELETE FROM slots WHERE date < ?', (seven_days_ago,))

@@ -91,7 +91,7 @@ def handle_subscribe_day_selection(message):
         subscribe_to_free_slots(message)
         return
     chat_id = message.chat.id
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     current_date = datetime.now().strftime("%Y-%m-%d")
     cursor.execute("SELECT time, subscribed_users FROM slots WHERE date = ? AND status IN (1, 2)  AND date >= ?", (selected_day, current_date))
@@ -127,7 +127,7 @@ def handle_subscribe_time_selection(message):
         return_to_main_menu(message)
         return
     selected_time = message.text.strip()
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     cursor.execute("SELECT status FROM slots WHERE date = ? AND time = ?", (selected_day, selected_time))
     result = cursor.fetchone()
@@ -350,7 +350,7 @@ def handle_comment_input(message):
     hours = user_states.get(f"{chat_id}_hours")
     start_hour = int(selected_time.split(":")[0])
     date_obj = datetime.strptime(selected_day, "%Y-%m-%d")
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     conflict = False
     for i in range(hours):
@@ -377,7 +377,7 @@ def handle_comment_input(message):
     end_datetime = start_datetime + timedelta(hours=hours)
     end_time = f"{end_datetime.hour}:00"
     book_slots(selected_day, selected_time, hours, chat_id, group_name, booking_type, comment, contact_info)
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     booking_ids = []
     current_date = datetime.strptime(selected_day, "%Y-%m-%d")
@@ -452,7 +452,7 @@ def return_to_main_menu(message):
 @main_bot.message_handler(func=lambda msg: msg.text == "Отменить бронь")
 def handle_cancel_booking(message):
     chat_id = message.chat.id
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     today = datetime.now().strftime("%Y-%m-%d")
     cursor.execute("SELECT DISTINCT date FROM slots WHERE status IN (1, 2) AND user_id = ? AND date >= ? ORDER BY date", (chat_id, today))
@@ -590,6 +590,6 @@ def handle_user_choose_booking_for_cancellation(message):
     show_menu(message)
 
 if __name__ == "__main__":
-    if not os.path.exists('bookings.db'):
+    if not os.path.exists('db/bookings.db'):
         init_db()
     main_bot.polling(none_stop=True)

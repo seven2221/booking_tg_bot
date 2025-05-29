@@ -77,7 +77,7 @@ def send_schedule_list(message):
     chat_id = message.chat.id
     today = datetime.now().strftime("%Y-%m-%d")
     tomorrow = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     cursor.execute('SELECT date, time, group_name, contact_info, booking_type, comment FROM slots WHERE date IN (?, ?) AND status != 0 ORDER BY date, time', (today, tomorrow))
     rows = cursor.fetchall()
@@ -167,7 +167,7 @@ def handle_cancel_booking(message):
         admin_bot.send_message(message.chat.id, "❌ У вас нет прав для выполнения этой операции.")
         return
     today = datetime.now().date()
-    conn = sqlite3.connect('bookings.db')
+    conn = sqlite3.connect('db/bookings.db')
     cursor = conn.cursor()
     cursor.execute('SELECT DISTINCT date FROM slots WHERE status IN (1, 2) AND date >= ? ORDER BY date', (today.strftime("%Y-%m-%d"),))
     all_dates = [row[0] for row in cursor.fetchall()]
@@ -319,7 +319,7 @@ def handle_callback_query(call):
         return
     group_name = None
     try:
-        with sqlite3.connect('bookings.db') as conn:
+        with sqlite3.connect('db/bookings.db') as conn:
             cursor = conn.cursor()
             query_slots = 'SELECT date, time, group_name FROM slots WHERE id IN ({}) ORDER BY time'.format(','.join('?' * len(booking_ids)))
             cursor.execute(query_slots, booking_ids)
