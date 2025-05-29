@@ -2,6 +2,7 @@ import sqlite3
 from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from lib.utils import get_user_id_from_booking_ids, format_date
+from datetime import datetime
 
 def send_booking_selection_keyboard(chat_id, bookings, bot):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -28,21 +29,13 @@ def create_confirmation_keyboard(selected_day, selected_time, booking_ids=None):
     if not booking_ids:
         conn = sqlite3.connect('bookings.db')
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT created_by FROM slots 
-            WHERE date = ? AND time = ?
-        ''', (selected_day, selected_time))
+        cursor.execute('SELECT created_by FROM slots WHERE date = ? AND time = ?', (selected_day, selected_time))
         creator_row = cursor.fetchone()
         if not creator_row:
             conn.close()
             return None
         creator_id = creator_row[0]
-        cursor.execute('''
-            SELECT id, created_by, date, time 
-            FROM slots 
-            WHERE created_by = ? 
-            ORDER BY date, time
-        ''', (creator_id,))
+        cursor.execute('SELECT id, created_by, date, time FROM slots WHERE created_by = ? ORDER BY date, time', (creator_id,))
         rows = cursor.fetchall()
         conn.close()
         if not rows:
@@ -79,21 +72,13 @@ def create_cancellation_keyboard(selected_day, selected_time, booking_ids=None):
     if not booking_ids:
         conn = sqlite3.connect('bookings.db')
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT created_by FROM slots 
-            WHERE date = ? AND time = ?
-        ''', (selected_day, selected_time))
+        cursor.execute('SELECT created_by FROM slots WHERE date = ? AND time = ?', (selected_day, selected_time))
         creator_row = cursor.fetchone()
         if not creator_row:
             conn.close()
             return None
         creator_id = creator_row[0]
-        cursor.execute('''
-            SELECT id, created_by, date, time 
-            FROM slots 
-            WHERE created_by = ? 
-            ORDER BY date, time
-        ''', (creator_id,))
+        cursor.execute('SELECT id, created_by, date, time FROM slots WHERE created_by = ? ORDER BY date, time', (creator_id,))
         rows = cursor.fetchall()
         conn.close()
         if not rows:

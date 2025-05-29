@@ -62,7 +62,6 @@ def send_reminders():
             conn.close()
 
 def get_end_time(date, start_time, group_name, created_by, cursor):
-    """Вычисляет время окончания бронирования"""
     start_datetime = datetime.strptime(f"{date} {start_time}", "%Y-%m-%d %H:%M")
     current = start_datetime
     while True:

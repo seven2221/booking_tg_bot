@@ -70,16 +70,7 @@ def reject_booking(booking_ids):
     with sqlite3.connect('bookings.db') as conn:
         cursor = conn.cursor()
         placeholders = ','.join('?' * len(booking_ids))
-        query = f'''UPDATE slots SET 
-                    user_id = NULL, 
-                    group_name = NULL, 
-                    created_by = NULL, 
-                    booking_type = NULL, 
-                    comment = NULL, 
-                    contact_info = NULL, 
-                    subscribed_users = NULL,
-                    status = 0 
-                  WHERE id IN ({placeholders})'''
+        query = f'UPDATE slots SET user_id = NULL, group_name = NULL, created_by = NULL, booking_type = NULL, comment = NULL, contact_info = NULL, subscribed_users = NULL, status = 0 WHERE id IN ({placeholders})'
         cursor.execute(query, booking_ids)
         conn.commit()
 
@@ -91,15 +82,11 @@ def format_booking_info(group):
            f"Время: {start_time}–{end_time}\n"\
            f"Группа: {group['group_name']}\n"\
            f"Контакт: @{group['user_id']}"
-           
+
 def update_booking_status(date, time, status):
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute('''
-        UPDATE slots 
-        SET status = ?
-        WHERE date = ? AND time = ?
-    ''', (status, date, time))
+    cursor.execute('UPDATE slots SET status = ? WHERE date = ? AND time = ?', (status, date, time))
     conn.commit()
     conn.close()
 
@@ -115,10 +102,6 @@ def book_slots(date, start_time, hours, user_id, group_name, booking_type, comme
         current_date = date_obj + timedelta(days=days_passed)
         time = f"{hour_in_day:02d}:00"
         current_date_str = current_date.strftime("%Y-%m-%d")
-        cursor.execute('''
-            UPDATE slots 
-            SET user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?, contact_info = ?, status = 1
-            WHERE date = ? AND time = ?''',
-            (user_id, group_name, user_id, booking_type, comment, contact_info, current_date_str, time))
+        cursor.execute('UPDATE slots SET user_id = ?, group_name = ?, created_by = ?, booking_type = ?, comment = ?, contact_info = ?, status = 1 WHERE date = ? AND time = ?', (user_id, group_name, user_id, booking_type, comment, contact_info, current_date_str, time))
     conn.commit()
     conn.close()

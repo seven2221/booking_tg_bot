@@ -27,16 +27,7 @@ def add_subscriber_to_slot(date, time, user_id):
 def clear_booking_slots(slot_ids, bot):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
-    update_query = '''UPDATE slots SET 
-                        user_id = NULL, 
-                        group_name = NULL, 
-                        created_by = NULL, 
-                        booking_type = NULL, 
-                        comment = NULL, 
-                        contact_info = NULL, 
-                        status = 0,
-                        subscribed_users = NULL
-                      WHERE id IN ({})'''.format(','.join('?' * len(slot_ids)))
+    update_query = "UPDATE slots SET user_id = NULL, group_name = NULL, created_by = NULL, booking_type = NULL, comment = NULL, contact_info = NULL, status = 0, subscribed_users = NULL WHERE id IN ({})".format(','.join('?' * len(slot_ids)))
     cursor.execute(update_query, slot_ids)
     conn.commit()
     conn.close()
@@ -44,7 +35,7 @@ def clear_booking_slots(slot_ids, bot):
 def get_schedule_for_day(date, user_id=None):
     conn = sqlite3.connect('bookings.db', check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute('SELECT time, status, group_name FROM slots WHERE date = ? ORDER BY time', (date,))
+    cursor.execute("SELECT time, status, group_name FROM slots WHERE date = ? ORDER BY time", (date,))
     schedule = []
     for row in cursor.fetchall():
         time, status, group_name = row
@@ -66,15 +57,9 @@ def get_free_days():
         is_today = date_str == today.strftime("%Y-%m-%d")
         if is_today:
             current_hour = now_time.hour
-            cursor.execute('''
-                SELECT COUNT(*) FROM slots 
-                WHERE date = ? AND status != 0 AND time >= ?
-            ''', (date_str, f"{current_hour:02d}:00"))
+            cursor.execute("SELECT COUNT(*) FROM slots WHERE date = ? AND status != 0 AND time >= ?", (date_str, f"{current_hour:02d}:00"))
         else:
-            cursor.execute('''
-                SELECT COUNT(*) FROM slots 
-                WHERE date = ? AND status != 0
-            ''', (date_str,))
+            cursor.execute("SELECT COUNT(*) FROM slots WHERE date = ? AND status != 0", (date_str,))
         result = cursor.fetchone()
         if result[0] == 0 or result[0] < 13:
             free_days.append(date_str)
@@ -84,12 +69,7 @@ def get_free_days():
 def get_daily_schedule_from_db(date):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
-    cursor.execute('''
-        SELECT time, status, group_name, booking_type, comment 
-        FROM slots 
-        WHERE date = ? 
-        ORDER BY time
-    ''', (date,))
+    cursor.execute("SELECT time, status, group_name, booking_type, comment FROM slots WHERE date = ? ORDER BY time", (date,))
     rows = cursor.fetchall()
     conn.close()
     schedule = []
@@ -103,7 +83,6 @@ def get_daily_schedule_from_db(date):
             "comment": comment if status > 0 else ""
         })
     return schedule
-
 
 def prepare_daily_schedule_data(date):
     raw_slots = get_daily_schedule_from_db(date)
@@ -151,13 +130,7 @@ def get_grouped_daily_bookings(date):
     cursor = conn.cursor()
     prev_day = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
     next_day = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-    query = '''
-        SELECT id, date, time, group_name, created_by, booking_type, comment 
-        FROM slots
-        WHERE date IN (?, ?, ?)
-          AND status IN (1, 2)
-        ORDER BY date, time
-    '''
+    query = "SELECT id, date, time, group_name, created_by, booking_type, comment FROM slots WHERE date IN (?, ?, ?) AND status IN (1, 2) ORDER BY date, time"
     params = [prev_day, date, next_day]
     cursor.execute(query, params)
     rows = cursor.fetchall()
@@ -224,11 +197,7 @@ def get_grouped_daily_bookings(date):
 def get_grouped_unconfirmed_bookings():
     with sqlite3.connect('bookings.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, date, time, group_name, created_by FROM slots
-            WHERE status = 1
-            ORDER BY date, time
-        ''')
+        cursor.execute("SELECT id, date, time, group_name, created_by FROM slots WHERE status = 1 ORDER BY date, time")
         rows = cursor.fetchall()
     bookings = []
     for row in rows:
@@ -282,14 +251,10 @@ def get_grouped_bookings_for_cancellation(date, created_by=None):
     cursor = conn.cursor()
     prev_day = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
     next_day = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-    query = '''
-        SELECT id, date, time, group_name, created_by FROM slots
-        WHERE date IN (?, ?, ?)
-          AND status IN (1, 2)
-    '''
+    query = "SELECT id, date, time, group_name, created_by FROM slots WHERE date IN (?, ?, ?) AND status IN (1, 2)"
     params = [prev_day, date, next_day]
     if created_by is not None:
-        query += ' AND created_by = ?'
+        query += " AND created_by = ?"
         params.append(created_by)
     cursor.execute(query, params)
     rows = cursor.fetchall()

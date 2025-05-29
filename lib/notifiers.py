@@ -1,7 +1,6 @@
 import sqlite3
 from datetime import datetime
 
-
 def notify_subscribers_for_cancellation(group, bot):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
@@ -36,7 +35,7 @@ def notify_subscribers_for_cancellation(group, bot):
     
 def notify_booking_cancelled(user_id, bot, group_name=None, start_time=None, end_time=None, date_formatted=None):
     try:
-        message = (f"❌ К сожалению, ваша бронь для группы \n*{group_name}*\n{date_formatted} с {start_time} по {end_time}\nбыла отменена по техническим причинам.\nПриносим свои извинения за доставленные неудобства.\nСвязь с админом: @cyberocalypse")
+        message = (f"❌ К сожалению, мы были вынуждены отменить вашу бронь для группы \n*{group_name}*\n{date_formatted} с {start_time} по {end_time}\nпо техническим причинам.\nПриносим свои извинения за доставленные неудобства.\nСвязь с админом: @cyberocalypse")
         bot.send_message(int(user_id), message.strip(), parse_mode='Markdown')
     except Exception as e:
         print(f"[Error] Не удалось отправить уведомление пользователю {user_id}: {e}")

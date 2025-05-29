@@ -13,11 +13,9 @@ from lib.notifiers import notify_subscribers_for_cancellation, notify_booking_ca
 
 load_dotenv()
 user_states = {}
-
 ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 MAIN_BOT_TOKEN = os.getenv("MAIN_BOT_TOKEN")
 ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
-
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 
@@ -40,8 +38,7 @@ def handle_start(message):
 @admin_bot.message_handler(func=lambda msg: msg.text == "Посмотреть расписание")
 def view_schedule(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add(types.KeyboardButton("Расписание на 28 дней"))
-    markup.add(types.KeyboardButton("Расписание на сегодня"))
+    markup.row(types.KeyboardButton("Расписание на 28 дней"), types.KeyboardButton("Расписание на сегодня"))
     admin_bot.send_message(message.chat.id, "Выберите тип расписания:", reply_markup=markup)
     reset_user_state(message.chat.id, user_states)
 
@@ -59,6 +56,12 @@ def view_28_days_schedule(message):
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "Расписание на сегодня")
 def view_today_schedule(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row(types.KeyboardButton("Картинкой"), types.KeyboardButton("Списком"))
+    admin_bot.send_message(message.chat.id, "Выберите формат расписания:", reply_markup=markup)
+
+@admin_bot.message_handler(func=lambda msg: msg.text == "Картинкой")
+def send_schedule_image(message):
     path = create_daily_schedule_image(message.chat.id)
     if path:
         with open(path, "rb") as img:
@@ -69,6 +72,94 @@ def view_today_schedule(message):
     reset_user_state(message.chat.id, user_states)
     show_menu(message)
 
+@admin_bot.message_handler(func=lambda msg: msg.text == "Списком")
+def send_schedule_list(message):
+    chat_id = message.chat.id
+    today = datetime.now().strftime("%Y-%m-%d")
+    tomorrow = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    conn = sqlite3.connect('bookings.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT date, time, group_name, contact_info, booking_type, comment FROM slots WHERE date IN (?, ?) AND status != 0 ORDER BY date, time', (today, tomorrow))
+    rows = cursor.fetchall()
+    conn.close()
+    if not rows:
+        admin_bot.send_message(chat_id, "На сегодня нет записей в расписании.")
+        show_menu(message)
+        return
+    def is_consecutive(prev_date, prev_time, curr_date, curr_time):
+        if not prev_time:
+            return False
+        prev_dt = datetime.strptime(f"{prev_date} {prev_time}", "%Y-%m-%d %H:%M")
+        curr_dt = datetime.strptime(f"{curr_date} {curr_time}", "%Y-%m-%d %H:%M")
+        return (curr_dt - prev_dt) == timedelta(hours=1)
+    output_groups = []
+    current_group = None
+    start_time = None
+    start_date = None
+    prev_time = None
+    prev_date = None
+    for row in rows:
+        date_str, time_str, group_name, contact_info, booking_type, comment = row
+        group_data = (group_name or "", contact_info or "", booking_type or "", comment or "")
+        if group_name is None and contact_info is None and booking_type is None and comment is None:
+            continue
+        if current_group is None:
+            current_group = group_data
+            start_time = time_str
+            start_date = date_str
+        elif group_data != current_group or not is_consecutive(prev_date, prev_time, date_str, time_str):
+            end_dt = datetime.strptime(f"{prev_date} {prev_time}", "%Y-%m-%d %H:%M") + timedelta(hours=1)
+            output_groups.append((start_date, start_time, end_dt, current_group))
+            current_group = group_data
+            start_time = time_str
+            start_date = date_str
+        prev_time = time_str
+        prev_date = date_str
+    if current_group and prev_time and prev_date:
+        end_dt = datetime.strptime(f"{prev_date} {prev_time}", "%Y-%m-%d %H:%M") + timedelta(hours=1)
+        output_groups.append((start_date, start_time, end_dt, current_group))
+    now = datetime.now()
+    for start_date, start_time, end_dt, group_data in output_groups:
+        start_dt = datetime.strptime(f"{start_date} {start_time}", "%Y-%m-%d %H:%M")
+        if end_dt <= now or start_date != today:
+            continue
+        send_schedule_list_notification(chat_id, start_dt.strftime("%H:%M"), end_dt.strftime("%H:%M"), group_data)
+    reset_user_state(chat_id, user_states)
+    show_menu(message)
+
+def send_schedule_list_notification(chat_id, start_time, end_time, group_data):
+    group_name, contact_info, booking_type, comment = group_data
+    if contact_info:
+        contact_info = contact_info.strip()
+        if contact_info.startswith("+7") or contact_info.startswith("8"):
+            contact = f"[{contact_info}]"
+        elif contact_info.startswith("@"):
+            contact = contact_info
+        elif "@" in contact_info:
+            contact = contact_info
+        else:
+            contact = contact_info
+    else:
+        contact = "не указан"
+    note = (
+        f"_Время:_ *{start_time}–{end_time}*\n"
+        f"_Группа:_ *{group_name}*\n"
+        f"_Тип:_ *{booking_type}*\n"
+        f"_Комментарий:_ {comment}\n"
+        f"_Контакт:_ {contact}"
+    )
+    try:
+        admin_bot.send_message(chat_id, note, parse_mode='Markdown')
+    except Exception as e:
+        print(f"[Error] Can't send notification to admin: {e}")
+
+def is_consecutive(prev_time, curr_time):
+    if not prev_time:
+        return False
+    prev = datetime.strptime(prev_time, "%H:%M")
+    curr = datetime.strptime(curr_time, "%H:%M")
+    return (curr - prev) == timedelta(hours=1)
+
 @admin_bot.message_handler(func=lambda msg: msg.text == "Отменить бронь")
 def handle_cancel_booking(message):
     admin_id = message.from_user.id
@@ -78,9 +169,7 @@ def handle_cancel_booking(message):
     today = datetime.now().date()
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
-    cursor.execute('''
-        SELECT DISTINCT date FROM slots WHERE status IN (1, 2) AND date >= ? ORDER BY date
-    ''', (today.strftime("%Y-%m-%d"),))
+    cursor.execute('SELECT DISTINCT date FROM slots WHERE status IN (1, 2) AND date >= ? ORDER BY date', (today.strftime("%Y-%m-%d"),))
     all_dates = [row[0] for row in cursor.fetchall()]
     conn.close()
     valid_dates = []
@@ -213,8 +302,8 @@ def handle_view_unconfirmed(message):
         ids = group['ids']
         user_id = group['user_id']
         markup = types.InlineKeyboardMarkup()
-        confirm_btn = types.InlineKeyboardButton("✅ Подтвердить",callback_data=f"confirm:{','.join(map(str, ids))}:{user_id}")
-        reject_btn = types.InlineKeyboardButton("❌ Отклонить",callback_data=f"reject:{','.join(map(str, ids))}:{user_id}")
+        confirm_btn = types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{','.join(map(str, ids))}:{user_id}")
+        reject_btn = types.InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{','.join(map(str, ids))}:{user_id}")
         markup.add(confirm_btn, reject_btn)
         admin_bot.send_message(message.chat.id, info, reply_markup=markup)
     show_menu(message)
@@ -232,14 +321,12 @@ def handle_callback_query(call):
     try:
         with sqlite3.connect('bookings.db') as conn:
             cursor = conn.cursor()
-            query_slots = 'SELECT date, time, group_name FROM slots WHERE id IN ({}) ORDER BY time'.format(
-                ','.join('?' * len(booking_ids)))
+            query_slots = 'SELECT date, time, group_name FROM slots WHERE id IN ({}) ORDER BY time'.format(','.join('?' * len(booking_ids)))
             cursor.execute(query_slots, booking_ids)
             rows = cursor.fetchall()
             if not rows:
                 raise Exception("Не найдено данных о слотах")
-            cursor.execute('SELECT id, status FROM slots WHERE id IN ({})'.format(
-                ','.join('?' * len(booking_ids))), booking_ids)
+            cursor.execute('SELECT id, status FROM slots WHERE id IN ({})'.format(','.join('?' * len(booking_ids))), booking_ids)
             status_rows = cursor.fetchall()
             status_set = set(status for _, status in status_rows)
         dates = set(row[0] for row in rows)
@@ -256,7 +343,7 @@ def handle_callback_query(call):
             formatted_date = "неизвестная дата"
         confirmation_message = f"✅ Ваша бронь для группы «{group_name}» подтверждена!\nОжидаем вас {formatted_date} в {start_time} по адресу проспект Труда, 111А.\nСвязь с админом: @cyberocalypse"
         decline_message = f"❌ К сожалению, по техническим причинам мы вынуждены отклонить вашу бронь для группы «{group_name or 'неизвестная группа'}» {formatted_date} в {start_time}.\nПриносим извинения за неудобства. 😔\nПожалуйста, выберите другое время.\nСвязь с админом: @cyberocalypse"
-        cancellation_message = f"🚫 Ваша бронь для группы «{group_name or 'неизвестная группа'}» {formatted_date} в {start_time} была отменена администратором по вашей заявке.\n"
+        cancellation_message = f"🚫 Ваша бронь для группы «{group_name or 'неизвестная группа'}» {formatted_date} в {start_time} была отменена администратором по вашей заявке."
         if action == "confirm":
             confirm_booking(booking_ids)
             try:

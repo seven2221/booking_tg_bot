@@ -44,7 +44,7 @@ def show_menu(message):
     keyboard.add(types.KeyboardButton("Отменить бронь"))
     keyboard.add(types.KeyboardButton("Быть в курсе, если освободится время"))
     keyboard.add(types.KeyboardButton("Посмотреть прайс"))
-    main_bot.send_message(message.chat.id, "Выберите действие:", reply_markup=keyboard)
+    main_bot.send_message(message.chat.id, "(Это БЕТА-версия бота. Большая просьба обо всех найденных неисправностях и пожеланиях по улучшениям сообщать @cyberocalypse или @seven2221)\n\nВыберите действие:", reply_markup=keyboard)
     reset_user_state(message.chat.id, user_states)
 
 @main_bot.message_handler(commands=['start'])
@@ -94,10 +94,7 @@ def handle_subscribe_day_selection(message):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
     current_date = datetime.now().strftime("%Y-%m-%d")
-    cursor.execute('''
-        SELECT time, subscribed_users FROM slots 
-        WHERE date = ? AND status IN (1, 2)  AND date >= ?
-    ''', (selected_day, current_date))
+    cursor.execute("SELECT time, subscribed_users FROM slots WHERE date = ? AND status IN (1, 2)  AND date >= ?", (selected_day, current_date))
     rows = cursor.fetchall()
     conn.close()
     if not rows:
@@ -132,10 +129,7 @@ def handle_subscribe_time_selection(message):
     selected_time = message.text.strip()
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
-    cursor.execute('''
-        SELECT status FROM slots 
-        WHERE date = ? AND time = ?
-    ''', (selected_day, selected_time))
+    cursor.execute("SELECT status FROM slots WHERE date = ? AND time = ?", (selected_day, selected_time))
     result = cursor.fetchone()
     conn.close()
     if not result or result[0] not in (1, 2):
@@ -461,11 +455,7 @@ def handle_cancel_booking(message):
     conn = sqlite3.connect('bookings.db')
     cursor = conn.cursor()
     today = datetime.now().strftime("%Y-%m-%d")
-    cursor.execute('''
-        SELECT DISTINCT date FROM slots 
-        WHERE status IN (1, 2) AND user_id = ? AND date >= ?
-        ORDER BY date
-    ''', (chat_id, today))
+    cursor.execute("SELECT DISTINCT date FROM slots WHERE status IN (1, 2) AND user_id = ? AND date >= ? ORDER BY date", (chat_id, today))
     all_dates = [row[0] for row in cursor.fetchall()]
     conn.close()
     valid_dates = []

@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  main-bot:
+    build:
+      context: .
+      target: main-bot
+    container_name: main-bot
+    env_file:
+      - .env
+    volumes:
+      - ./bookings.db:/app/bookings.db
+    restart: unless-stopped
+
+  admin-bot:
+    build:
+      context: .
+      target: admin-bot
+    container_name: admin-bot
+    env_file:
+      - .env
+    volumes:
+      - ./bookings.db:/app/bookings.db
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      target: scheduler
+    container_name: scheduler
+    env_file:
+      - .env
+    volumes:
+      - ./bookings.db:/app/bookings.db
+    restart: unless-stopped
