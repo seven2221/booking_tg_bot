@@ -22,11 +22,7 @@ def send_reminders():
             target_datetime = notification_time.strftime("%Y-%m-%d %H:%M")
             target_date = notification_time.strftime("%Y-%m-%d")
             target_time = notification_time.strftime("%H:%M")
-            cursor.execute('''
-                SELECT date, time, created_by, group_name 
-                FROM slots 
-                WHERE status = 2 AND date = ? AND time = ?
-            ''', (target_date, target_time))
+            cursor.execute("SELECT date, time, created_by, group_name FROM slots WHERE status = 2 AND date = ? AND time = ?", (target_date, target_time))
             reminders_to_send = cursor.fetchall()
             for reminder in reminders_to_send:
                 date, time, created_by, group_name = reminder
@@ -35,11 +31,7 @@ def send_reminders():
                     prev_date = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
                 else:
                     prev_date = date
-                cursor.execute('''
-                    SELECT group_name, created_by 
-                    FROM slots 
-                    WHERE date = ? AND time = ?
-                ''', (prev_date, prev_time))
+                cursor.execute("SELECT group_name, created_by FROM slots WHERE date = ? AND time = ?", (prev_date, prev_time))
                 prev_slot = cursor.fetchone()
                 if prev_slot:
                     prev_group, prev_created = prev_slot
@@ -69,11 +61,7 @@ def get_end_time(date, start_time, group_name, created_by, cursor):
         next_date = current.strftime("%Y-%m-%d")
         if next_hour == "00:00":
             next_date = (current + timedelta(days=1)).strftime("%Y-%m-%d")
-        cursor.execute('''
-            SELECT group_name, created_by 
-            FROM slots 
-            WHERE date = ? AND time = ?
-        ''', (next_date, next_hour))
+        cursor.execute("SELECT group_name, created_by FROM slots WHERE date = ? AND time = ?", (next_date, next_hour))
         next_slot = cursor.fetchone()
         if not next_slot:
             break

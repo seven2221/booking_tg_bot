@@ -1,6 +1,5 @@
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 
-# m h  dom mon dow   command
-0   *  *   *   *     cd /app && python reminder.py >> /var/log/reminder.log 2>&1
-0   0  *   *   *     cd /app && python db_updater.py >> /var/log/db_updater.log 2>&1
+0   *  *   *   *     root cd /app && python reminder.py >> /var/log/reminder.log 2>&1
+0   0  *   *   *     root cd /app && python db_updater.py >> /var/log/db_updater.log 2>&1
