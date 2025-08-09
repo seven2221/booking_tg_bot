@@ -12,6 +12,8 @@ services:
       - ./db:/app/db
       - ./price.txt:/app/price.txt
     restart: unless-stopped
+    depends_on:
+      - mysql
 
   admin-bot:
     build:
@@ -23,6 +25,8 @@ services:
     volumes:
       - ./db:/app/db
     restart: unless-stopped
+    depends_on:
+      - mysql
 
   scheduler:
     build:
@@ -34,3 +38,20 @@ services:
     volumes:
       - ./db:/app/db
     restart: unless-stopped
+    depends_on:
+      - mysql
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:
+    driver: local
