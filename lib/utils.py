@@ -1,13 +1,10 @@
 import os
 import re
 from datetime import datetime, timedelta
-
 from dotenv import load_dotenv
-
 from lib.db_init import get_connection
 
 load_dotenv()
-
 ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(","))) if os.getenv("ADMIN_IDS") else []
 
 
@@ -17,10 +14,7 @@ def is_admin(user_id):
 
 def reset_user_state(chat_id, user_states):
     chat_id_str = str(chat_id)
-    keys_to_delete = [
-        key for key in user_states
-        if key == chat_id or str(key).startswith(f"{chat_id}_")
-    ]
+    keys_to_delete = [key for key in user_states if key == chat_id or str(key).startswith(f"{chat_id}_")]
     for key in keys_to_delete:
         user_states.pop(key, None)
 
@@ -29,14 +23,6 @@ def format_date(date_str):
     date_obj = datetime.strptime(date_str, "%Y-%m-%d")
     weekdays = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
     return f"{date_obj.strftime('%d.%m')} {weekdays[date_obj.weekday()]}"
-
-
-def format_date_to_db(date_str):
-    parts = date_str.split()
-    day_month = parts[0]
-    year = datetime.now().year
-    date_obj = datetime.strptime(f"{day_month}.{year}", "%d.%m.%Y")
-    return date_obj.strftime("%Y-%m-%d")
 
 
 def validate_input(value, max_length=100):
@@ -59,13 +45,11 @@ def get_hour_word(hours):
     else:
         return "часов"
 
-
 def get_user_id_from_booking_ids(booking_ids):
     if not booking_ids:
         return None
     placeholders = ",".join(["%s"] * len(booking_ids))
     sql = f"SELECT created_by FROM slots WHERE id IN ({placeholders}) LIMIT 1"
-
     conn = get_connection()
     try:
         cur = conn.cursor()
