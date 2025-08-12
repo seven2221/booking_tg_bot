@@ -286,111 +286,40 @@ def get_grouped_daily_bookings(date: str):
 def get_grouped_unconfirmed_bookings():
     conn = get_connection()
     try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT id, date, time, group_name, created_by "
-            "FROM slots WHERE status = 1 ORDER BY date, time"
-        )
-        rows = cur.fetchall()
+        cur = conn.cursor(dictionary=True)
+        cur.execute("""
+            SELECT booking_id,
+                   MIN(date) AS date_str,
+                   MIN(time) AS start_time,
+                   MAX(time) AS end_time,
+                   group_name,
+                   booking_type,
+                   comment,
+                   contact_info
+            FROM slots
+            WHERE status = 1
+            GROUP BY booking_id, group_name, booking_type, comment, contact_info
+            ORDER BY date_str, start_time
+        """)
+        return cur.fetchall()
     finally:
         conn.close()
 
-    bookings = []
-    for bid, date_str, time_str, group_name, user_id in rows:
-        try:
-            dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-        except ValueError:
-            continue
-        bookings.append(
-            {
-                "id": bid,
-                "datetime": dt,
-                "date_str": date_str,
-                "time_str": time_str,
-                "group_name": group_name,
-                "user_id": user_id,
-            }
-        )
 
-    grouped = []
-    current = None
-    for b in bookings:
-        if not current:
-            current = {
-                "start_time": b["datetime"],
-                "end_time": b["datetime"] + timedelta(hours=1),
-                "ids": [b["id"]],
-                "group_name": b["group_name"],
-                "user_id": b["user_id"],
-                "date_str": b["date_str"],
-            }
-        else:
-            if (
-                b["group_name"] == current["group_name"]
-                and b["user_id"] == current["user_id"]
-                and b["datetime"] == current["end_time"]
-            ):
-                current["end_time"] += timedelta(hours=1)
-                current["ids"].append(b["id"])
-            else:
-                grouped.append(current)
-                current = {
-                    "start_time": b["datetime"],
-                    "end_time": b["datetime"] + timedelta(hours=1),
-                    "ids": [b["id"]],
-                    "group_name": b["group_name"],
-                    "user_id": b["user_id"],
-                    "date_str": b["date_str"],
-                }
-    if current:
-        grouped.append(current)
-    return grouped
-
-
-def get_grouped_bookings_for_cancellation(date: str, created_by=None):
-    target = datetime.strptime(date, "%Y-%m-%d")
-    prev_day = (target - timedelta(days=1)).strftime("%Y-%m-%d")
-    next_day = (target + timedelta(days=1)).strftime("%Y-%m-%d")
-
-    dates_list = [prev_day, date, next_day]
-
-    where = "status IN (1, 2)"
-    params = []
-    if created_by is not None:
-        where += " AND created_by = %s"
-
-    placeholders = ",".join(["%s"] * len(dates_list))
-
+def get_grouped_bookings_for_cancellation(date_str):
     conn = get_connection()
     try:
-        cur = conn.cursor()
-        sql = (
-            f"SELECT id, date, time, group_name, created_by "
-            f"FROM slots WHERE date IN ({placeholders}) AND {where} "
-            f"ORDER BY date, time"
-        )
-        cur.execute(sql, tuple(dates_list) + ((created_by,) if created_by is not None else tuple()))
-        rows = cur.fetchall()
+        cur = conn.cursor(dictionary=True)
+        cur.execute("""
+            SELECT booking_id,
+                   MIN(time) AS start_time,
+                   MAX(time) AS end_time,
+                   ANY_VALUE(group_name) AS group_name
+            FROM slots
+            WHERE date = %s AND status IN (1, 2)
+            GROUP BY booking_id
+            ORDER BY start_time
+        """, (date_str,))
+        return cur.fetchall()
     finally:
         conn.close()
-
-    bookings = []
-    for bid, date_str, time_str, group_name, user_id in rows:
-        try:
-            dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-        except ValueError:
-            continue
-        bookings.append(
-            {
-                "id": bid,
-                "datetime": dt,
-                "date_str": date_str,
-                "time_str": time_str,
-                "group_name": group_name,
-                "user_id": user_id,
-            }
-        )
-
-    grouped = _group_contiguous(bookings)
-    filtered = [g for g in grouped if g["start_time"].strftime("%Y-%m-%d") == date]
-    return filtered

@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from lib.db_init import get_connection
@@ -45,64 +46,62 @@ def get_hour_word(hours):
     else:
         return "часов"
 
-def get_user_id_from_booking_ids(booking_ids):
-    if not booking_ids:
-        return None
-    placeholders = ",".join(["%s"] * len(booking_ids))
-    sql = f"SELECT created_by FROM slots WHERE id IN ({placeholders}) LIMIT 1"
+def get_user_id_by_booking(booking_id):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(sql, tuple(booking_ids))
+        cur.execute("SELECT DISTINCT user_id FROM slots WHERE booking_id = %s", (booking_id,))
         row = cur.fetchone()
         return row[0] if row else None
     finally:
         conn.close()
 
 
-def confirm_booking(booking_ids):
-    if not booking_ids:
-        return
-    placeholders = ",".join(["%s"] * len(booking_ids))
-    sql = f"UPDATE slots SET status = 2 WHERE id IN ({placeholders})"
+def confirm_booking(booking_id):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(sql, tuple(booking_ids))
+        cur.execute("UPDATE slots SET status = 2 WHERE booking_id = %s", (booking_id,))
         conn.commit()
     finally:
         conn.close()
 
 
-def reject_booking(booking_ids):
-    if not booking_ids:
-        return
-    placeholders = ",".join(["%s"] * len(booking_ids))
-    sql = (
-        "UPDATE slots SET "
-        "user_id = NULL, group_name = NULL, created_by = NULL, "
-        "booking_type = NULL, comment = NULL, contact_info = NULL, "
-        "subscribed_users = NULL, status = 0 "
-        f"WHERE id IN ({placeholders})"
-    )
+def reject_booking(booking_id):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(sql, tuple(booking_ids))
+        cur.execute("""
+            UPDATE slots
+            SET status = 0,
+                user_id = NULL,
+                group_name = NULL,
+                booking_type = NULL,
+                comment = NULL,
+                contact_info = NULL,
+                booking_id = NULL
+            WHERE booking_id = %s
+        """, (booking_id,))
         conn.commit()
     finally:
         conn.close()
+
+
+def clear_booking_slots(booking_id):
+    reject_booking(booking_id)
 
 
 def format_booking_info(group):
-    start_time = group["start_time"].strftime("%H:%M")
-    end_time = group["end_time"].strftime("%H:%M")
-    date_str = datetime.strptime(group["date_str"], "%Y-%m-%d").strftime("%d.%m.%Y")
+    start_time = group["start_time"].strftime("%H:%M") if hasattr(group["start_time"], "strftime") else str(group["start_time"])
+    end_time = group["end_time"].strftime("%H:%M") if hasattr(group["end_time"], "strftime") else str(group["end_time"])
+    date_str = datetime.strptime(group["date_str"], "%Y-%m-%d").strftime("%d.%m.%Y") if isinstance(group["date_str"], str) else group["date_str"].strftime("%d.%m.%Y")
+    user_val = group.get("user_id", "")
+    user_label = f"@{user_val}" if isinstance(user_val, str) and user_val else (str(user_val) if user_val else "—")
     return (
         f"Дата: {date_str}\n"
         f"Время: {start_time}–{end_time}\n"
-        f"Группа: {group['group_name']}\n"
-        f"Контакт: @{group['user_id']}"
+        f"Группа: {group.get('group_name') or '—'}\n"
+        f"Контакт: {user_label}"
     )
 
 
@@ -119,37 +118,31 @@ def update_booking_status(date, time, status):
         conn.close()
 
 
-def book_slots(date, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
+def book_slots(date_str, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
+    booking_id = int(time.time())
+    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
     start_hour = int(start_time.split(":")[0])
-    date_obj = datetime.strptime(date, "%Y-%m-%d")
-
     conn = get_connection()
     try:
         cur = conn.cursor()
         for i in range(hours):
-            current_hour = start_hour + i
-            days_passed = current_hour // 24
-            hour_in_day = current_hour % 24
-            current_date = date_obj + timedelta(days=days_passed)
-            time_str = f"{hour_in_day:02d}:00"
-            current_date_str = current_date.strftime("%Y-%m-%d")
-
-            cur.execute(
-                "UPDATE slots SET "
-                "user_id = %s, group_name = %s, created_by = %s, "
-                "booking_type = %s, comment = %s, contact_info = %s, status = 1 "
-                "WHERE date = %s AND time = %s",
-                (
-                    user_id,
-                    group_name,
-                    user_id,
-                    booking_type,
-                    comment,
-                    contact_info,
-                    current_date_str,
-                    time_str,
-                ),
-            )
+            cur_hour = (start_hour + i) % 24
+            cur_day = (date_obj + timedelta(days=(start_hour + i) // 24)).strftime("%Y-%m-%d")
+            cur.execute("""
+                INSERT INTO slots (
+                    date, time, user_id, group_name, booking_type, comment, contact_info, status, booking_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s)
+            """, (
+                cur_day,
+                f"{cur_hour:02d}:00",
+                user_id,
+                group_name,
+                booking_type,
+                comment,
+                contact_info,
+                booking_id
+            ))
         conn.commit()
     finally:
         conn.close()
+    return booking_id

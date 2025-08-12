@@ -87,65 +87,26 @@ def _group_booking_ids(rows):
     return grouped
 
 
-def create_confirmation_keyboard(selected_day, selected_time, booking_ids=None):
-    keyboard = InlineKeyboardMarkup()
-
-    if not booking_ids:
-        creator_id = _load_creator_id_for_slot(selected_day, selected_time)
-        if creator_id is None:
-            return None
-
-        rows = _load_all_slots_by_creator(creator_id)
-        if not rows:
-            return None
-
-        grouped = _group_booking_ids(rows)
-        if not grouped:
-            return None
-
-        booking_ids = grouped[0]['ids']
-
-    user_id = get_user_id_from_booking_ids(booking_ids)
-
-    keyboard.row(
+def create_confirmation_keyboard(selected_day: str, selected_time: str, booking_ids):
+    markup = InlineKeyboardMarkup()
+    markup.add(
         InlineKeyboardButton(
-            "✅ Подтвердить",
-            callback_data=f"confirm:{','.join(map(str, booking_ids))}:{user_id}",
-        ),
-        InlineKeyboardButton(
-            "❌ Отклонить",
-            callback_data=f"reject:{','.join(map(str, booking_ids))}:{user_id}",
-        ),
-    )
-
-    return keyboard
-
-
-def create_cancellation_keyboard(selected_day, selected_time, booking_ids=None):
-    keyboard = InlineKeyboardMarkup()
-
-    if not booking_ids:
-        creator_id = _load_creator_id_for_slot(selected_day, selected_time)
-        if creator_id is None:
-            return None
-
-        rows = _load_all_slots_by_creator(creator_id)
-        if not rows:
-            return None
-
-        grouped = _group_booking_ids(rows)
-        if not grouped:
-            return None
-
-        booking_ids = grouped[0]['ids']
-
-    user_id = get_user_id_from_booking_ids(booking_ids)
-
-    keyboard.row(
-        InlineKeyboardButton(
-            "🚫 Подтвердить отмену",
-            callback_data=f"cancel:{','.join(map(str, booking_ids))}:{user_id}",
+            "✅ Подтвердить", callback_data=f"confirm:{selected_day}:{selected_time}"
         )
     )
+    markup.add(
+        InlineKeyboardButton(
+            "❌ Отклонить", callback_data=f"reject:{selected_day}:{selected_time}"
+        )
+    )
+    return markup
 
-    return keyboard
+
+def create_cancellation_keyboard(date_str: str, start_time: str, booking_ids):
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton(
+            "🚫 Подтвердить отмену", callback_data=f"cancel:{date_str}:{start_time}"
+        )
+    )
+    return markup

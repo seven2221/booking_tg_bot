@@ -39,30 +39,6 @@ admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 user_states: dict[int, dict] = {}
 
 
-def create_confirmation_keyboard(selected_day: str, selected_time: str, booking_ids):
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton(
-            "Подтвердить", callback_data=f"confirm:{selected_day}:{selected_time}"
-        )
-    )
-    markup.add(
-        InlineKeyboardButton(
-            "Отклонить", callback_data=f"reject:{selected_day}:{selected_time}"
-        )
-    )
-    return markup
-
-
-def create_cancellation_keyboard(date_str: str, start_time: str, booking_ids):
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton(
-            "Подтвердить отмену", callback_data=f"cancel:{date_str}:{start_time}"
-        )
-    )
-    return markup
-
 
 def send_date_selection_keyboard(chat_id: int, dates, bot):
     iso_dates = [(d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)) for d in dates]
@@ -529,139 +505,55 @@ def show_price_list_during_booking(message):
     show_comment_prompt(chat_id)
 
 
-@main_bot.message_handler(
-    func=lambda msg: isinstance(user_states.get(msg.chat.id), dict)
-    and user_states[msg.chat.id].get("step") == "waiting_for_comment"
-)
+@main_bot.message_handler(func=lambda m: isinstance(user_states.get(m.chat.id), dict) and user_states[m.chat.id].get("step") == "waiting_for_comment")
 def handle_comment_input(message):
     chat_id = message.chat.id
-    state = user_states.get(chat_id, {}) or {}
-    if message.text == "Прайс":
-        return
+    state = user_states.get(chat_id, {})
     comment = "" if message.text == "Ок" else message.text.strip()
     if comment and not validate_input(comment, max_length=200):
-        main_bot.send_message(
-            chat_id,
-            'Комментарий не должен превышать 200 символов и содержать символы: /, \\, *, ". '
-            "Попробуйте снова.",
-        )
+        main_bot.send_message(chat_id, "Комментарий некорректен, попробуйте снова.")
         return
     selected_day = state.get("selected_day")
     selected_time = state.get("selected_time")
     hours = state.get("hours")
-    start_hour = int(selected_time.split(':')[0])
-    date_obj = datetime.strptime(selected_day, "%Y-%m-%d")
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        conflict = False
-        for i in range(hours):
-            current_hour = start_hour + i
-            days_passed = current_hour // 24
-            hour_in_day = current_hour % 24
-            slot_date = (date_obj + timedelta(days=days_passed)).strftime("%Y-%m-%d")
-            slot_time = f"{hour_in_day:02d}:00"
-            cur.execute(
-                "SELECT status FROM slots WHERE date = %s AND time = %s",
-                (slot_date, slot_time),
-            )
-            row = cur.fetchone()
-            status = row[0] if row else 0
-            if status != 0:
-                conflict = True
-                break
-    finally:
-        conn.close()
-    if conflict:
-        main_bot.send_message(
-            chat_id,
-            "Это время уже занято другим пользователем. Пожалуйста, выберите другое время.",
-        )
-        reset_user_state(chat_id, user_states)
-        show_menu(message)
-        return
     group_name = state.get("group_name")
     booking_type = state.get("booking_type")
     contact_info = state.get("contact_info")
-    start_datetime = datetime.combine(date_obj.date(), datetime.min.time()).replace(
-        hour=start_hour, minute=0
-    )
-    end_datetime = start_datetime + timedelta(hours=hours)
-    end_time = f"{end_datetime.hour:02d}:00"
-    book_slots(
-        selected_day,
-        selected_time,
-        hours,
-        chat_id,
-        group_name,
-        booking_type,
-        comment,
-        contact_info,
-    )
-    conn = get_connection()
-    booking_ids = []
-    try:
-        cur = conn.cursor()
-        current_date = datetime.strptime(selected_day, "%Y-%m-%d")
-        for i in range(hours):
-            current_hour = start_hour + i
-            days_passed = current_hour // 24
-            hour_in_day = current_hour % 24
-            slot_date = (current_date + timedelta(days=days_passed)).strftime("%Y-%m-%d")
-            slot_time = f"{hour_in_day:02d}:00"
-            cur.execute(
-                "SELECT id FROM slots WHERE date = %s AND time = %s AND user_id = %s",
-                (slot_date, slot_time, chat_id),
-            )
-            row = cur.fetchone()
-            if row:
-                booking_ids.append(row[0])
-    finally:
-        conn.close()
-    try:
-        formatted_date = format_date(selected_day).replace(" ", ".")[:-3]
-    except ValueError:
-        formatted_date = selected_day
+    end_dt = datetime.strptime(f"{selected_day} {selected_time}", "%Y-%m-%d %H:%M") + timedelta(hours=hours)
+    end_time = end_dt.strftime("%H:%M")
+    booking_id = book_slots(selected_day, selected_time, hours, chat_id, group_name, booking_type, comment, contact_info)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("Забронировать ещё", "На главную")
     main_bot.send_message(
         chat_id,
-        "Спасибо! 👍\n"
-        f"Вы забронировали *{hours}* {get_hour_word(hours)} с *{selected_time} по {end_time}* *{formatted_date}*\n"
-        f"Группа: *{group_name}*\n"
-        "Пожалуйста, ожидайте подтверждения брони администратором.",
+        f"Спасибо! 👍\nВы забронировали *{hours}* {get_hour_word(hours)} "
+        f"с *{selected_time} по {end_time}* {format_date(selected_day)}\nГруппа: *{group_name}*",
         parse_mode="Markdown",
+        reply_markup=markup
     )
-    if message.from_user.username:
-        mention = f"@{message.from_user.username}"
-    elif contact_info.startswith("@"):
-        mention = contact_info
-    elif contact_info.replace("+", "").isdigit():
-        mention = f"[{message.from_user.first_name}](tel:{contact_info})"
-    else:
-        mention = f"{message.from_user.first_name} (ID: {message.from_user.id})"
     note = (
-        f"🔔 *Новая бронь!*\n"
+        "🔔 *Новая бронь!*\n"
         f"_Дата:_ *{selected_day}*\n"
         f"_Время:_ *{selected_time}-{end_time}*\n"
         f"_Группа:_ *{group_name}*\n"
         f"_Тип:_ *{booking_type}*\n"
-        f"_Комментарий:_ {comment}\n"
-        f"_Контакт:_ {contact_info}\n"
-        f"_Создатель:_ {mention}"
+        f"_Комментарий:_ {comment or '—'}\n"
+        f"_Контакт:_ {contact_info or '—'}\n"
+        f"_Создатель:_ {chat_id}"
     )
     for admin_id in ADMIN_IDS:
         try:
             admin_bot.send_message(
                 admin_id,
                 note,
-                parse_mode='Markdown',
-                reply_markup=create_confirmation_keyboard(selected_day, selected_time, booking_ids)
+                parse_mode="Markdown",
+                reply_markup=types.InlineKeyboardMarkup().add(
+                    types.InlineKeyboardButton("Подтвердить", callback_data=f"confirm:{booking_id}"),
+                    types.InlineKeyboardButton("Отклонить", callback_data=f"reject:{booking_id}")
+                )
             )
         except Exception as e:
-            print(f"[Error] Can't send message to admin {admin_id}: {e}")
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(types.KeyboardButton("Забронировать другое время"))
-    keyboard.add(types.KeyboardButton("Вернуться на главную"))
-    main_bot.send_message(chat_id, "Продолжить?", reply_markup=keyboard)
+            logger.error(f"Ошибка отправки админу {admin_id}: {e}")
     reset_user_state(chat_id, user_states)
 
 

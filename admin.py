@@ -400,14 +400,14 @@ def handle_callback_query(call):
             try:
                 main_bot.send_message(user_id, confirmation_message)
             except Exception as e:
-                print(f"[Error] Не удалось отправить пользователю {user_id}: {e}")
+                print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
             admin_bot.answer_callback_query(call.id, "✅ Бронь подтверждена.")
         elif action == "reject":
             reject_booking(booking_ids)
             try:
                 main_bot.send_message(user_id, decline_message)
             except Exception as e:
-                print(f"[Error] Не удалось отправить пользователю {user_id}: {e}")
+                print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
             admin_bot.answer_callback_query(call.id, "❌ Бронь отклонена.")
         elif action == "cancel":
             reject_booking(booking_ids)
@@ -429,6 +429,38 @@ def handle_callback_query(call):
         except Exception as e:
             print(f"[Error] Не удалось удалить клавиатуру: {e}")
 
+
+@admin_bot.callback_query_handler(func=lambda c: c.data.startswith("confirm:"))
+def cb_confirm(c):
+    booking_id = int(c.data.split(":")[1])
+    confirm_booking(booking_id)
+    user_id = get_user_id_by_booking(booking_id)
+    if user_id:
+        main_bot.send_message(user_id, "Ваша бронь подтверждена ✅")
+    admin_bot.answer_callback_query(c.id, "Подтверждено")
+    admin_bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
+
+
+@admin_bot.callback_query_handler(func=lambda c: c.data.startswith("reject:"))
+def cb_reject(c):
+    booking_id = int(c.data.split(":")[1])
+    reject_booking(booking_id)
+    user_id = get_user_id_by_booking(booking_id)
+    if user_id:
+        main_bot.send_message(user_id, "К сожалению, ваша бронь отклонена ❌")
+    admin_bot.answer_callback_query(c.id, "Отклонено")
+    admin_bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
+
+
+@admin_bot.callback_query_handler(func=lambda c: c.data.startswith("cancel:"))
+def cb_cancel(c):
+    booking_id = int(c.data.split(":")[1])
+    clear_booking_slots(booking_id)
+    user_id = get_user_id_by_booking(booking_id)
+    if user_id:
+        main_bot.send_message(user_id, "Ваша бронь отменена ❌")
+    admin_bot.answer_callback_query(c.id, "Отменено")
+    admin_bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
 
 
 def main():

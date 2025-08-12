@@ -11,30 +11,39 @@ def _load_upcoming_dates(days_to_show=28):
     today = datetime.now().strftime("%Y-%m-%d")
     conn = get_connection()
     try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT DISTINCT date FROM slots WHERE date >= %s ORDER BY date LIMIT %s",
-            (today, days_to_show),
-        )
-        return [
-            (row[0].strftime("%Y-%m-%d") if hasattr(row[0], "strftime") else str(row[0]))
-            for row in cur.fetchall()
-        ]
+        cur = conn.cursor(buffered=True)
+        try:
+            cur.execute(
+                "SELECT DISTINCT date FROM slots WHERE date >= %s ORDER BY date LIMIT %s",
+                (today, days_to_show),
+            )
+            rows = cur.fetchall()
+        finally:
+            cur.close()
     finally:
         conn.close()
+    return [
+        (row[0].strftime("%Y-%m-%d") if hasattr(row[0], "strftime") else str(row[0]))
+        for row in rows
+    ]
+
 
 def _load_slot_status(date_str: str, time_str: str) -> int:
     conn = get_connection()
     try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT status FROM slots WHERE date = %s AND time = %s",
-            (date_str, time_str),
-        )
-        row = cur.fetchone()
-        return int(row[0]) if row and row[0] is not None else 0
+        cur = conn.cursor(buffered=True)
+        try:
+            cur.execute(
+                "SELECT status FROM slots WHERE date = %s AND time = %s LIMIT 1",
+                (date_str, time_str),
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+        finally:
+            cur.close()
     finally:
         conn.close()
+
 
 def _get_fonts():
     try:
@@ -106,9 +115,8 @@ def create_schedule_grid_image(requester_id=None, days_to_show=28):
                 except IndexError:
                     time_str, status, group_name = "", 0, ""
 
-                if status > 0:
-                    if is_admin(requester_id):
-                        status = _load_slot_status(date, time_str)
+                if status > 0 and is_admin(requester_id):
+                    status = _load_slot_status(date, time_str)
                     if status == 2:
                         bg_color = (255, 180, 180)
                     elif status == 1:
