@@ -35,6 +35,7 @@ if not MAIN_BOT_TOKEN:
     raise RuntimeError("MAIN_BOT_TOKEN не задан в окружении")
 
 main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
+admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 user_states: dict[int, dict] = {}
 
 
@@ -638,7 +639,7 @@ def handle_comment_input(message):
     else:
         mention = f"{message.from_user.first_name} (ID: {message.from_user.id})"
     note = (
-        "🔔 *Новая бронь!*\n"
+        f"🔔 *Новая бронь!*\n"
         f"_Дата:_ *{selected_day}*\n"
         f"_Время:_ *{selected_time}-{end_time}*\n"
         f"_Группа:_ *{group_name}*\n"
@@ -840,6 +841,7 @@ def handle_user_choose_booking_for_cancellation(message):
         f"_Время:_ *{start_time}–{end_time}*\n"
         f"_Группа:_ *{group_name}*\n"
         f"_Создатель:_ *{mention}*"
+    )
     for admin_id in ADMIN_IDS:
         try:
             admin_bot.send_message(
