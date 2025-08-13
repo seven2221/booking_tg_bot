@@ -81,7 +81,6 @@ def create_schedule_grid_image(requester_id=None, days_to_show=28):
     dates = _load_upcoming_dates(days_to_show)
     if not dates:
         return None
-
     schedules = {
         date: [
             (t, s, g) for t, s, g in get_schedule_for_day(date, requester_id)
@@ -89,19 +88,15 @@ def create_schedule_grid_image(requester_id=None, days_to_show=28):
         ]
         for date in dates
     }
-
     max_slots = max((len(slots) for slots in schedules.values()), default=1)
     cell_width, cell_height, padding = 450, 70, 10
     time_font, group_font, date_font = _get_fonts()
-
     cols = 7
     rows = (len(dates) + cols - 1) // cols
     img_width = cols * (cell_width + padding) + padding
     img_height = rows * ((max_slots + 1) * (cell_height + padding)) + padding
-
     img = Image.new("RGB", (img_width, img_height), color="white")
     draw = ImageDraw.Draw(img)
-
     for row_offset in range(rows):
         for col in range(cols):
             index = row_offset * cols + col
@@ -111,13 +106,14 @@ def create_schedule_grid_image(requester_id=None, days_to_show=28):
             x = padding + col * (cell_width + padding)
             y = padding + row_offset * ((max_slots + 1) * (cell_height + padding))
             draw.rectangle([x, y, x + cell_width, y + cell_height], fill=(220, 220, 220))
-
             formatted_date = format_date(date)
             bbox = draw.textbbox((0, 0), formatted_date, font=date_font)
-            tx = x + (cell_width - bbox[2]) // 2
-            ty = y + (cell_height - bbox[3]) // 2
+            tw = bbox[2] - bbox[0]
+            th = bbox[3] - bbox[1]
+            tx = x + (cell_width - tw) // 2
+            ty = y + (cell_height - th) // 2
             draw.text((tx, ty), formatted_date, fill="black", font=date_font)
-
+    admin_mode = is_admin(requester_id)
     for row_offset in range(rows):
         for row_index in range(max_slots):
             for col in range(cols):
@@ -132,44 +128,49 @@ def create_schedule_grid_image(requester_id=None, days_to_show=28):
                     + (row_index + 1) * (cell_height + padding)
                 )
                 try:
-                    time_str, status, group_name = schedules[date][row_index]
+                    time_str, status_prefetched, group_prefetched = schedules[date][row_index]
                 except IndexError:
-                    time_str, status, group_name = "", 0, ""
-
-                if status > 0 and is_admin(requester_id):
-                    status = _load_slot_status(date, time_str)
-                    if status == 2:
+                    time_str, status_prefetched, group_prefetched = "", 0, ""
+                if status_prefetched > 0 and admin_mode:
+                    live_status = _load_slot_status(date, time_str) if time_str else 0
+                    if live_status == 2:
                         bg_color = (255, 180, 180)
-                    elif status == 1:
+                    elif live_status == 1:
                         bg_color = (255, 200, 150)
                     else:
                         bg_color = (255, 200, 200)
                 else:
                     bg_color = (200, 255, 200)
-
                 draw.rectangle([x, y, x + cell_width, y + cell_height], fill=bg_color, outline="black")
-                draw.text(
-                    (x + padding, y + (cell_height - 26) // 2),
-                    time_str,
-                    fill="black",
-                    font=time_font,
-                )
-
-                if is_admin(requester_id):
-                    status, group_name_live = _load_slot_status_and_group(date, time_str)
-                    status_to_show = status
-                    group_to_show = group_name_live
-                else:
-                    status_to_show = _load_slot_status(date, time_str)
-                if status_to_show and status_to_show > 0:
-                    cell_text = (group_to_show or "занято") if is_admin(requester_id) else "занято"
-                else:
-                    cell_text = ""
-                draw.text((text_x, text_y), cell_text, font=font, fill=fill_color)
-
+                if time_str:
+                    time_y = y + (cell_height - 26) // 2
+                    draw.text(
+                        (x + padding, time_y),
+                        time_str,
+                        fill="black",
+                        font=time_font,
+                    )
+                cell_text = ""
+                if time_str:
+                    if admin_mode:
+                        st, group_live = _load_slot_status_and_group(date, time_str)
+                        if st and st > 0:
+                            cell_text = group_live or group_prefetched or "занято"
+                    else:
+                        st = _load_slot_status(date, time_str)
+                        if st and st > 0:
+                            cell_text = "занято"
+                if cell_text:
+                    bbox2 = draw.textbbox((0, 0), cell_text, font=group_font)
+                    tw2 = bbox2[2] - bbox2[0]
+                    th2 = bbox2[3] - bbox2[1]
+                    text_x = x + (cell_width - tw2) // 2
+                    text_y = y + (cell_height - th2) // 2
+                    draw.text((text_x, text_y), cell_text, font=group_font, fill="black")
     path = "schedule_grid.png"
     img.save(path, dpi=(300, 300))
     return path
+
 
 def _text_center(draw, text, x, y, w, h, font):
     bbox = draw.textbbox((0, 0), text, font=font)
