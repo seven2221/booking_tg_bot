@@ -108,9 +108,8 @@ def book_time(message):
 @main_bot.message_handler(func=lambda msg: msg.text == "Посмотреть расписание")
 def view_schedule(message):
     path = create_schedule_grid_image(message.chat.id)
-    try:
-        with open(path, "rb") as img:
-            main_bot.send_photo(message.chat.id, img, caption="Расписание на ближайшие 28 дней:")
+    with open(path, "rb") as f:
+        main_bot.send_photo(message.chat.id, f)
     finally:
         try:
             os.remove(path)
@@ -523,7 +522,7 @@ def handle_comment_input(message):
     end_time = end_dt.strftime("%H:%M")
     booking_id = book_slots(selected_day, selected_time, hours, chat_id, group_name, booking_type, comment, contact_info)
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("Забронировать ещё", "На главную")
+    markup.add("ЗЗабронировать другое время", "Вернуться на главную")
     main_bot.send_message(
         chat_id,
         f"Спасибо! 👍\nВы забронировали *{hours}* {get_hour_word(hours)} "

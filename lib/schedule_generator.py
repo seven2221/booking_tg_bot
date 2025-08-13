@@ -35,10 +35,31 @@ def _load_slot_status(date_str: str, time_str: str) -> int:
         try:
             cur.execute(
                 "SELECT status FROM slots WHERE date = %s AND time = %s LIMIT 1",
-                (date_str, time_str),
+                (date_str, time_str)
             )
             row = cur.fetchone()
             return int(row[0]) if row and row[0] is not None else 0
+        finally:
+            cur.close()
+    finally:
+        conn.close()
+
+
+def _load_slot_status_and_group(date_str: str, time_str: str) -> tuple[int, str | None]:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(buffered=True)
+        try:
+            cur.execute(
+                "SELECT status, group_name FROM slots WHERE date = %s AND time = %s LIMIT 1",
+                (date_str, time_str)
+            )
+            row = cur.fetchone()
+            if not row:
+                return 0, None
+            status = int(row[0]) if row[0] is not None else 0
+            group_name = row[1]
+            return status, group_name
         finally:
             cur.close()
     finally:
@@ -103,7 +124,7 @@ def create_schedule_grid_image(requester_id=None, days_to_show=28):
                 index = row_offset * cols + col
                 if index >= len(dates):
                     break
-                date = dates[index]  # строка
+                date = dates[index]
                 x = padding + col * (cell_width + padding)
                 y = (
                     padding
@@ -134,26 +155,17 @@ def create_schedule_grid_image(requester_id=None, days_to_show=28):
                     font=time_font,
                 )
 
-                if status > 0:
-                    label = group_name if is_admin(requester_id) else "Занято"
-                    fitted_font = group_font
-                    try:
-                        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-                        while True:
-                            line_width = draw.textbbox((0, 0), label, font=fitted_font)[2]
-                            if line_width <= cell_width * 0.6 or getattr(fitted_font, "size", 28) <= 28:
-                                break
-                            fitted_font = ImageFont.truetype(
-                                font_path, getattr(fitted_font, "size", 28) - 1
-                            )
-                    except OSError:
-                        pass
-                    draw.text(
-                        (x + cell_width // 4 + padding, y + (cell_height - getattr(fitted_font, "size", 24)) // 2),
-                        label,
-                        fill="black",
-                        font=fitted_font,
-                    )
+                if is_admin(requester_id):
+                    status, group_name_live = _load_slot_status_and_group(date, time_str)
+                    status_to_show = status
+                    group_to_show = group_name_live
+                else:
+                    status_to_show = _load_slot_status(date, time_str)
+                if status_to_show and status_to_show > 0:
+                    cell_text = (group_to_show or "занято") if is_admin(requester_id) else "занято"
+                else:
+                    cell_text = ""
+                draw.text((text_x, text_y), cell_text, font=font, fill=fill_color)
 
     path = "schedule_grid.png"
     img.save(path, dpi=(300, 300))

@@ -46,7 +46,8 @@ def get_hour_word(hours):
     else:
         return "часов"
 
-def get_user_id_by_booking(booking_id):
+
+def get_user_id_by_booking(booking_id: int):
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -57,7 +58,7 @@ def get_user_id_by_booking(booking_id):
         conn.close()
 
 
-def confirm_booking(booking_id):
+def confirm_booking(booking_id: int):
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -67,7 +68,7 @@ def confirm_booking(booking_id):
         conn.close()
 
 
-def reject_booking(booking_id):
+def reject_booking(booking_id: int):
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -87,7 +88,7 @@ def reject_booking(booking_id):
         conn.close()
 
 
-def clear_booking_slots(booking_id):
+def clear_booking_slots(booking_id: int):
     reject_booking(booking_id)
 
 
@@ -128,11 +129,7 @@ def book_slots(date_str, start_time, hours, user_id, group_name, booking_type, c
         for i in range(hours):
             cur_hour = (start_hour + i) % 24
             cur_day = (date_obj + timedelta(days=(start_hour + i) // 24)).strftime("%Y-%m-%d")
-            cur.execute("""
-                INSERT INTO slots (
-                    date, time, user_id, group_name, booking_type, comment, contact_info, status, booking_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s)
-            """, (
+            cur.execute("INSERT INTO slots (date, time, user_id, group_name, booking_type, comment, contact_info, status, booking_id) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s)", (
                 cur_day,
                 f"{cur_hour:02d}:00",
                 user_id,
@@ -146,3 +143,4 @@ def book_slots(date_str, start_time, hours, user_id, group_name, booking_type, c
     finally:
         conn.close()
     return booking_id
+

@@ -288,17 +288,18 @@ def get_grouped_unconfirmed_bookings():
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute("""
-            SELECT booking_id,
-                   MIN(date) AS date_str,
-                   MIN(time) AS start_time,
-                   MAX(time) AS end_time,
-                   group_name,
-                   booking_type,
-                   comment,
-                   contact_info
+            SELECT
+                booking_id,
+                MIN(date) AS date_str,
+                MIN(time) AS start_time,
+                MAX(time) AS end_time,
+                ANY_VALUE(group_name)   AS group_name,
+                ANY_VALUE(booking_type) AS booking_type,
+                ANY_VALUE(comment)      AS comment,
+                ANY_VALUE(contact_info) AS contact_info
             FROM slots
             WHERE status = 1
-            GROUP BY booking_id, group_name, booking_type, comment, contact_info
+            GROUP BY booking_id
             ORDER BY date_str, start_time
         """)
         return cur.fetchall()
@@ -306,15 +307,16 @@ def get_grouped_unconfirmed_bookings():
         conn.close()
 
 
-def get_grouped_bookings_for_cancellation(date_str):
+def get_grouped_bookings_for_cancellation(date_str: str):
     conn = get_connection()
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute("""
-            SELECT booking_id,
-                   MIN(time) AS start_time,
-                   MAX(time) AS end_time,
-                   ANY_VALUE(group_name) AS group_name
+            SELECT
+                booking_id,
+                MIN(time) AS start_time,
+                MAX(time) AS end_time,
+                ANY_VALUE(group_name) AS group_name
             FROM slots
             WHERE date = %s AND status IN (1, 2)
             GROUP BY booking_id
