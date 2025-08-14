@@ -7,25 +7,10 @@ from lib.schedule_tasks import (
     get_daily_schedule_from_db,
 )
 
-def _load_upcoming_dates(days_to_show=28):
-    today = datetime.now().strftime("%Y-%m-%d")
-    conn = get_connection()
-    try:
-        cur = conn.cursor(buffered=True)
-        try:
-            cur.execute(
-                "SELECT DISTINCT date FROM slots WHERE date >= %s ORDER BY date LIMIT %s",
-                (today, days_to_show),
-            )
-            rows = cur.fetchall()
-        finally:
-            cur.close()
-    finally:
-        conn.close()
-    return [
-        (row[0].strftime("%Y-%m-%d") if hasattr(row[0], "strftime") else str(row[0]))
-        for row in rows
-    ]
+def _load_upcoming_dates(number_of_days):
+    from datetime import datetime, timedelta
+    today = datetime.now().date()
+    return [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(number_of_days)]
 
 
 def _load_slot_status(date_str: str, time_str: str) -> int:
@@ -77,99 +62,98 @@ def _get_fonts():
         time_font = group_font = date_font = ImageFont.load_default()
     return time_font, group_font, date_font
 
+
 def create_schedule_grid_image(requester_id=None, days_to_show=28):
-    dates = _load_upcoming_dates(days_to_show)
-    if not dates:
+    dates_to_show = _load_upcoming_dates(days_to_show)
+    if not dates_to_show:
         return None
-    schedules = {
-        date: [
-            (t, s, g) for t, s, g in get_schedule_for_day(date, requester_id)
-            if "11:00" <= t <= "23:00"
+    schedule_by_date = {
+        date_value: [
+            (time_str, status_value, group_name)
+            for (time_str, status_value, _booking_id, group_name) in get_schedule_for_day(date_value, requester_id)
+            if "11:00" <= time_str <= "23:00"
         ]
-        for date in dates
+        for date_value in dates_to_show
     }
-    max_slots = max((len(slots) for slots in schedules.values()), default=1)
+    max_slots_per_day = max((len(slots) for slots in schedule_by_date.values()), default=1)
     cell_width, cell_height, padding = 450, 70, 10
     time_font, group_font, date_font = _get_fonts()
-    cols = 7
-    rows = (len(dates) + cols - 1) // cols
-    img_width = cols * (cell_width + padding) + padding
-    img_height = rows * ((max_slots + 1) * (cell_height + padding)) + padding
-    img = Image.new("RGB", (img_width, img_height), color="white")
-    draw = ImageDraw.Draw(img)
-    for row_offset in range(rows):
-        for col in range(cols):
-            index = row_offset * cols + col
-            if index >= len(dates):
+    columns = 7
+    rows = (len(dates_to_show) + columns - 1) // columns
+    image_width = columns * (cell_width + padding) + padding
+    image_height = rows * ((max_slots_per_day + 1) * (cell_height + padding)) + padding
+    image = Image.new("RGB", (image_width, image_height), color="white")
+    draw = ImageDraw.Draw(image)
+    for row_index in range(rows):
+        for column_index in range(columns):
+            index = row_index * columns + column_index
+            if index >= len(dates_to_show):
                 break
-            date = dates[index]
-            x = padding + col * (cell_width + padding)
-            y = padding + row_offset * ((max_slots + 1) * (cell_height + padding))
+            date_value = dates_to_show[index]
+            x = padding + column_index * (cell_width + padding)
+            y = padding + row_index * ((max_slots_per_day + 1) * (cell_height + padding))
             draw.rectangle([x, y, x + cell_width, y + cell_height], fill=(220, 220, 220))
-            formatted_date = format_date(date)
+            formatted_date = format_date(date_value)
             bbox = draw.textbbox((0, 0), formatted_date, font=date_font)
-            tw = bbox[2] - bbox[0]
-            th = bbox[3] - bbox[1]
-            tx = x + (cell_width - tw) // 2
-            ty = y + (cell_height - th) // 2
-            draw.text((tx, ty), formatted_date, fill="black", font=date_font)
-    admin_mode = is_admin(requester_id)
-    for row_offset in range(rows):
-        for row_index in range(max_slots):
-            for col in range(cols):
-                index = row_offset * cols + col
-                if index >= len(dates):
+            text_left, text_top, text_right, text_bottom = bbox
+            text_width = text_right - text_left
+            text_height = text_bottom - text_top
+            text_x = x + (cell_width - text_width) // 2
+            text_y = y + (cell_height - text_height) // 2
+            draw.text((text_x, text_y), formatted_date, fill="black", font=date_font)
+    is_admin_mode = is_admin(requester_id)
+    for row_index in range(rows):
+        for slot_index in range(max_slots_per_day):
+            for column_index in range(columns):
+                index = row_index * columns + column_index
+                if index >= len(dates_to_show):
                     break
-                date = dates[index]
-                x = padding + col * (cell_width + padding)
+                date_value = dates_to_show[index]
+                x = padding + column_index * (cell_width + padding)
                 y = (
                     padding
-                    + row_offset * ((max_slots + 1) * (cell_height + padding))
-                    + (row_index + 1) * (cell_height + padding)
+                    + row_index * ((max_slots_per_day + 1) * (cell_height + padding))
+                    + (slot_index + 1) * (cell_height + padding)
                 )
                 try:
-                    time_str, status_prefetched, group_prefetched = schedules[date][row_index]
+                    time_str, status_prefetched, group_prefetched = schedule_by_date[date_value][slot_index]
                 except IndexError:
                     time_str, status_prefetched, group_prefetched = "", 0, ""
-                if status_prefetched > 0 and admin_mode:
-                    live_status = _load_slot_status(date, time_str) if time_str else 0
+                if status_prefetched > 0 and is_admin_mode:
+                    live_status = _load_slot_status(date_value, time_str) if time_str else 0
                     if live_status == 2:
-                        bg_color = (255, 180, 180)
+                        background_color = (255, 180, 180)
                     elif live_status == 1:
-                        bg_color = (255, 200, 150)
+                        background_color = (255, 200, 150)
                     else:
-                        bg_color = (255, 200, 200)
+                        background_color = (255, 200, 200)
                 else:
-                    bg_color = (200, 255, 200)
-                draw.rectangle([x, y, x + cell_width, y + cell_height], fill=bg_color, outline="black")
+                    background_color = (200, 255, 200)
+                draw.rectangle([x, y, x + cell_width, y + cell_height], fill=background_color, outline="black")
                 if time_str:
                     time_y = y + (cell_height - 26) // 2
-                    draw.text(
-                        (x + padding, time_y),
-                        time_str,
-                        fill="black",
-                        font=time_font,
-                    )
+                    draw.text((x + padding, time_y), time_str, fill="black", font=time_font)
                 cell_text = ""
                 if time_str:
-                    if admin_mode:
-                        st, group_live = _load_slot_status_and_group(date, time_str)
-                        if st and st > 0:
+                    if is_admin_mode:
+                        status_live, group_live = _load_slot_status_and_group(date_value, time_str)
+                        if status_live and status_live > 0:
                             cell_text = group_live or group_prefetched or "занято"
                     else:
-                        st = _load_slot_status(date, time_str)
-                        if st and st > 0:
+                        status_live = _load_slot_status(date_value, time_str)
+                        if status_live and status_live > 0:
                             cell_text = "занято"
                 if cell_text:
                     bbox2 = draw.textbbox((0, 0), cell_text, font=group_font)
-                    tw2 = bbox2[2] - bbox2[0]
-                    th2 = bbox2[3] - bbox2[1]
-                    text_x = x + (cell_width - tw2) // 2
-                    text_y = y + (cell_height - th2) // 2
-                    draw.text((text_x, text_y), cell_text, font=group_font, fill="black")
-    path = "schedule_grid.png"
-    img.save(path, dpi=(300, 300))
-    return path
+                    t_left, t_top, t_right, t_bottom = bbox2
+                    text_width2 = t_right - t_left
+                    text_height2 = t_bottom - t_top
+                    text_x2 = x + (cell_width - text_width2) // 2
+                    text_y2 = y + (cell_height - text_height2) // 2
+                    draw.text((text_x2, text_y2), cell_text, font=group_font, fill="black")
+    output_path = "schedule_grid.png"
+    image.save(output_path, dpi=(300, 300))
+    return output_path
 
 
 def _text_center(draw, text, x, y, w, h, font):
@@ -177,6 +161,7 @@ def _text_center(draw, text, x, y, w, h, font):
     tx = x + (w - bbox[2]) // 2
     ty = y + (h - bbox[3]) // 2
     draw.text((tx, ty), text, font=font, fill="black")
+
 
 def _multiline_center(draw, text, x, y, w, h, font, cell_padding=10, max_lines=2):
     words = (text or "").split()
@@ -199,17 +184,16 @@ def _multiline_center(draw, text, x, y, w, h, font, cell_padding=10, max_lines=2
         draw.text((x + cell_padding, ty), l, font=font, fill="black")
         ty += draw.textbbox((0, 0), l, font=font)[3]
 
+
 def create_daily_schedule_image(requester_id=None):
     today = datetime.now().strftime("%Y-%m-%d")
     raw_slots = get_daily_schedule_from_db(today)
     if not raw_slots:
         return None
-
     cell_padding = 10
     row_height = 60
     column_widths = [100, 200, 150, 250]
     headers = ["Время", "Группа", "Тип", "Комментарий"]
-
     try:
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
         bold_font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -217,7 +201,6 @@ def create_daily_schedule_image(requester_id=None):
         text_font = ImageFont.truetype(font_path, 18)
     except OSError:
         header_font = text_font = ImageFont.load_default()
-
     merge_map = {}
     i = 0
     while i < len(raw_slots):
@@ -239,24 +222,19 @@ def create_daily_schedule_image(requester_id=None):
                 break
         merge_map[i] = rowspan
         i += rowspan
-
     total_rows = len(raw_slots)
     img_height = (total_rows + 1) * (row_height + cell_padding) + cell_padding
     img_width = sum(column_widths) + cell_padding * (len(headers) + 1)
-
     img = Image.new("RGB", (img_width, img_height), color="white")
     draw = ImageDraw.Draw(img)
-
     x = cell_padding
     y = cell_padding
     for i, h in enumerate(headers):
         draw.rectangle([x, y, x + column_widths[i], y + row_height], fill=(220, 220, 220), outline="black")
         _text_center(draw, h, x, y, column_widths[i], row_height, header_font)
         x += column_widths[i] + cell_padding
-
     y_offset = y + row_height + cell_padding
     drawn = set()
-
     def get_bg_color(status_val):
         if status_val == 2:
             return (255, 180, 180)
@@ -264,39 +242,29 @@ def create_daily_schedule_image(requester_id=None):
             return (255, 200, 150)
         else:
             return (200, 255, 200)
-
     for row_index in range(total_rows):
         slot = raw_slots[row_index]
         row_y = y_offset + row_index * (row_height + cell_padding)
         x = cell_padding
-
         status_val = slot.get("status", 0) or 0
         bg_color = get_bg_color(status_val)
-
         draw.rectangle([x, row_y, x + column_widths[0], row_y + row_height], outline="black", fill=bg_color)
         _text_center(draw, slot.get("time", ""), x, row_y, column_widths[0], row_height, text_font)
         x += column_widths[0] + cell_padding
-
         for j, key in enumerate(["group_name", "booking_type", "comment"]):
             if row_index in drawn:
                 x += column_widths[j + 1] + cell_padding
                 continue
-
             rowspan = merge_map.get(row_index, 1)
             height = row_height if rowspan == 1 else (rowspan * (row_height + cell_padding)) - cell_padding
-
             draw.rectangle([x, row_y, x + column_widths[j + 1], row_y + height], outline="black", fill=bg_color)
-
             value = slot.get(key) or ""
             if key == "group_name" and not is_admin(requester_id) and value:
                 value = "Занято"
-
             _multiline_center(draw, value, x, row_y, column_widths[j + 1], height, text_font, cell_padding=cell_padding)
-
             for k in range(row_index + 1, row_index + rowspan):
                 drawn.add(k)
             x += column_widths[j + 1] + cell_padding
-
     path = "daily_schedule.png"
     img.save(path, dpi=(300, 300))
     return path

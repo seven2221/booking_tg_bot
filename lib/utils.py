@@ -160,6 +160,7 @@ def escape_markdown(text: str) -> str:
         return text
     return text.replace("_", "\\_").replace("*", "\\*")
 
+
 def get_booking_info_by_id(booking_id: int):
     conn = get_connection()
     try:
