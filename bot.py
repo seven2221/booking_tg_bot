@@ -1,6 +1,8 @@
 import logging
 import os
+import re
 import telebot
+import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from telebot import types
@@ -39,28 +41,10 @@ admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 user_states: dict[int, dict] = {}
 
 
-def send_date_selection_keyboard(chat_id: int, dates, bot):
-    iso_dates = [(d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)) for d in dates]
-    btn_map = {}
-    for iso in iso_dates:
-        try:
-            label = format_date(iso)
-        except Exception:
-            try:
-                label = datetime.strptime(iso, "%Y-%m-%d").strftime("%d.%m")
-            except Exception:
-                label = iso
-        btn_map[label] = iso
-    raw_state = user_states.get(chat_id)
-    state = raw_state if isinstance(raw_state, dict) else {}
-    state["date_btn_map"] = btn_map
-    state["shown_days"] = iso_dates
-    user_states[chat_id] = state
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for label in btn_map.keys():
-        markup.add(types.KeyboardButton(label))
-    markup.add(types.KeyboardButton("На главную"))
-    bot.send_message(chat_id, "Выберите дату:", reply_markup=markup)
+@main_bot.message_handler(func=lambda msg: msg.text == "На главную")
+def handle_back_to_main(message):
+    reset_user_state(message.chat.id, user_states)
+    show_menu(message)
 
 
 ### Главное меню ###
@@ -132,6 +116,25 @@ def show_free_days(message):
     user_states[chat_id] = {"step": "waiting_for_day"}
     main_bot.send_message(chat_id, "Свободные дни:", reply_markup=markup)
 
+
+def parse_date(text: str) -> str:
+    ddmm = text[:5]
+    try:
+        day, month = map(int, ddmm.split("."))
+    except Exception:
+        try:
+            datetime.strptime(text, "%Y-%m-%d")
+            return text
+        except Exception:
+            raise ValueError(f"Некорректный формат даты: {text!r}")
+    year = datetime.now().year
+    try:
+        date_obj = datetime(year, month, day)
+    except ValueError as e:
+        raise ValueError(f"Некорректная дата: {text!r}") from e
+    return date_obj.strftime("%Y-%m-%d")
+
+
 @main_bot.message_handler(func=lambda m: user_states.get(m.chat.id, {}).get("step") == "waiting_for_day")
 def handle_day_selection(message):
     chat_id = message.chat.id
@@ -144,28 +147,29 @@ def handle_day_selection(message):
         else:
             normalized.append({
                 "time": item[0],
-                "status": item[1],
-                "booking_id": item[2] if len(item) > 2 else None,
-                "group_name": item[3] if len(item) > 3 else None
+                "status": int(item[1]),
+                "booking_id": item[2],
+                "group_name": item[3]
             })
     slots = [s for s in normalized if 11 <= int(s["time"][:2]) <= 23]
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if selected_day == today_str:
+        next_hour = datetime.now().hour + 1
+        slots = [s for s in slots if int(s["time"][:2]) >= next_hour]
     is_admin_flag = is_admin(chat_id)
+    slots_sorted = sorted(slots, key=lambda x: int(x["time"][:2]))
     text_lines = [f"Расписание на {message.text}:"]
     free_slots = []
-    grouped = {}
-    for s in slots:
-        grouped.setdefault(s["booking_id"], []).append(s)
-    for booking_id in sorted(grouped.keys(), key=lambda x: x or 0):
-        for slot in sorted(grouped[booking_id], key=lambda x: int(x["time"][:2])):
-            t = slot["time"]
-            if slot["status"] == 0:
-                text_lines.append(f"{t} — Свободно")
-                free_slots.append(t)
+    for slot in slots_sorted:
+        t = slot["time"]
+        if slot["status"] == 0:
+            text_lines.append(f"{t} —")
+            free_slots.append(t)
+        else:
+            if is_admin_flag and slot["group_name"]:
+                text_lines.append(f"{t} — {slot['group_name']}")
             else:
-                if is_admin_flag and slot["group_name"]:
-                    text_lines.append(f"{t} — {slot['group_name']}")
-                else:
-                    text_lines.append(f"{t} — Занято")
+                text_lines.append(f"{t} — Занято")
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     row = []
     for i, t in enumerate(free_slots, start=1):
@@ -175,13 +179,20 @@ def handle_day_selection(message):
             row = []
     if row:
         markup.add(*row)
-    markup.add("На главную")
-
+    markup.add("Выбрать другой день", "На главную")
     user_states[chat_id] = {
         "step": "waiting_for_time",
         "day": selected_day
     }
     main_bot.send_message(chat_id, "\n".join(text_lines), reply_markup=markup)
+
+
+
+@main_bot.message_handler(func=lambda msg: msg.text == "Выбрать другой день")
+def handle_choose_other_day(message):
+    reset_user_state(message.chat.id, user_states)
+    user_states[message.chat.id] = {"step": "waiting_for_day"}
+    show_free_days(message)
 
 
 @main_bot.message_handler(func=lambda m: re.match(r"^\d{2}:00$", m.text))
@@ -191,7 +202,7 @@ def handle_time_selection(message):
         return
     user_states[chat_id]["time"] = message.text
     user_states[chat_id]["step"] = "waiting_for_hours"
-    main_bot.send_message(chat_id, "Сколько часов будет занято?\n\nУкажите число от 1 до 8.")
+    main_bot.send_message(chat_id, "Сколько часов будет занято?\nУкажите числом.", reply_markup=types.ReplyKeyboardRemove())
 
 
 @main_bot.message_handler(func=lambda m: user_states.get(m.chat.id, {}).get("step") == "waiting_for_hours")
@@ -224,13 +235,12 @@ def handle_hours_input(message):
             return show_free_days(message)
     user_states[chat_id]["hours"] = hours
     user_states[chat_id]["step"] = "waiting_for_group_name"
-    main_bot.send_message(chat_id, "Введите название группы (до 100 символов, без /, \\, *, \"):")
-
+    main_bot.send_message(chat_id, "Введите название группы:", reply_markup=types.ReplyKeyboardRemove())
 
 @main_bot.message_handler(func=lambda m: user_states.get(m.chat.id, {}).get("step") == "waiting_for_group_name")
 def handle_group_name_input(message):
     chat_id = message.chat.id
-    if not validate_input(message.text, max_len=100):
+    if not validate_input(message.text, max_length=100):
         return main_bot.send_message(chat_id, "Название группы не должно превышать 100 символов и содержать символы: /, \\, *, \".")
     user_states[chat_id]["group_name"] = message.text
     user_states[chat_id]["step"] = "waiting_for_contact"
@@ -240,7 +250,7 @@ def handle_group_name_input(message):
 @main_bot.message_handler(func=lambda m: user_states.get(m.chat.id, {}).get("step") == "waiting_for_contact")
 def handle_contact_input(message):
     chat_id = message.chat.id
-    if not validate_input(message.text, max_len=100):
+    if not validate_input(message.text, max_length=100):
         return main_bot.send_message(chat_id, "Контакт не должен превышать 100 символов и содержать символы: /, \\, *, \".")
     user_states[chat_id]["contact"] = message.text
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -316,16 +326,24 @@ def handle_comment_input(message):
     booking_type = user_states[chat_id]["booking_type"]
     contact_info = user_states[chat_id]["contact"]
     end_time = f"{int(selected_time[:2]) + hours:02d}:00"
-    booking_id = int(time.time())
-    book_slots(
-        day=selected_day,
-        start_time=selected_time,
-        hours=hours,
-        booking_id=booking_id,
-        group_name=group_name,
-        booking_type=booking_type,
-        contact_info=contact_info,
-        comment=comment
+    if message.from_user.username:
+        mention = f"@{message.from_user.username}"
+    elif contact_info.startswith('@'):
+        mention = contact_info
+    elif contact_info.replace('+', '').isdigit():
+        mention = f"[{message.from_user.first_name}](tel:{contact_info})"
+    else:
+        mention = f"{message.from_user.first_name} (ID: {message.from_user.id})"
+    booking_id = book_slots(
+        selected_day,
+        selected_time,
+        hours,
+        chat_id,
+        group_name,
+        booking_type,
+        comment,
+        contact_info,
+        mention
     )
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("Забронировать другое время", "На главную")
@@ -345,8 +363,7 @@ def handle_comment_input(message):
         f"Тип: {booking_type}\n"
         f"Комментарий: {comment or '—'}\n"
         f"Контакт: {contact_info or '—'}\n"
-        f"Создатель: {chat_id}\n"
-        f"booking_id: {booking_id}"
+        f"Создатель: {mention}"
     )
     inline_kb = types.InlineKeyboardMarkup()
     inline_kb.add(
@@ -355,11 +372,7 @@ def handle_comment_input(message):
     )
     for admin_id in ADMIN_IDS:
         try:
-            admin_bot.send_message(
-                admin_id,
-                note,
-                reply_markup=inline_kb
-            )
+            admin_bot.send_message(admin_id, note, reply_markup=inline_kb, parse_mode="Markdown")
         except Exception as e:
             try:
                 logger.error(f"Не удалось отправить уведомление админу {admin_id}: {e}")
@@ -381,6 +394,30 @@ def return_to_main_menu(message):
 
 
 ### Отмена брони ###
+
+def send_date_selection_keyboard(chat_id: int, dates, bot):
+    iso_dates = [(d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)) for d in dates]
+    btn_map = {}
+    for iso in iso_dates:
+        try:
+            label = format_date(iso)
+        except Exception:
+            try:
+                label = datetime.strptime(iso, "%Y-%m-%d").strftime("%d.%m")
+            except Exception:
+                label = iso
+        btn_map[label] = iso
+    raw_state = user_states.get(chat_id)
+    state = raw_state if isinstance(raw_state, dict) else {}
+    state["date_btn_map"] = btn_map
+    state["shown_days"] = iso_dates
+    user_states[chat_id] = state
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for label in btn_map.keys():
+        markup.add(types.KeyboardButton(label))
+    markup.add(types.KeyboardButton("На главную"))
+    bot.send_message(chat_id, "Выберите дату:", reply_markup=markup)
+
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Отменить бронь")
 def handle_cancel_booking(message):

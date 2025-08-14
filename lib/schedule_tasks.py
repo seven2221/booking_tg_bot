@@ -42,21 +42,22 @@ def add_subscriber_to_slot(date: str, time: str, user_id: int):
         conn.close()
 
 
-def clear_booking_slots(slot_ids, bot=None):
-    if not slot_ids:
-        return
-    placeholders = ",".join(["%s"] * len(slot_ids))
-    sql = (
-        f"UPDATE slots SET "
-        "user_id = NULL, group_name = NULL, created_by = NULL, "
-        "booking_type = NULL, comment = NULL, contact_info = NULL, "
-        "status = 0, subscribed_users = NULL "
-        f"WHERE id IN ({placeholders})"
-    )
+def reject_booking(booking_id: int):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(sql, tuple(slot_ids))
+        cur.execute("""
+            UPDATE slots
+            SET status = 0,
+                user_id = NULL,
+                group_name = NULL,
+                booking_type = NULL,
+                comment = NULL,
+                contact_info = NULL,
+                booking_id = NULL,
+                mention = NULL
+            WHERE booking_id = %s
+        """, (booking_id,))
         conn.commit()
     finally:
         conn.close()
@@ -67,16 +68,16 @@ def get_schedule_for_day(date: str, user_id=None):
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT time, status, group_name FROM slots WHERE date = %s ORDER BY time",
+            "SELECT time, status, booking_id, group_name FROM slots WHERE date = %s ORDER BY time",
             (date,),
         )
         schedule = []
         admin = is_admin(user_id)
-        for time_str, status, group_name in cur.fetchall():
+        for time_str, status, booking_id, group_name in cur.fetchall():
             if (status or 0) > 0 and not admin:
-                schedule.append((time_str, True, "Занято"))
+                schedule.append((time_str, status, booking_id, "Занято"))
             else:
-                schedule.append((time_str, (status or 0) > 0, group_name))
+                schedule.append((time_str, status, booking_id, group_name))
         return schedule
     finally:
         conn.close()

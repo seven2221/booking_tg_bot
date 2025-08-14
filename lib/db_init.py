@@ -98,6 +98,7 @@ def _ensure_columns(cursor):
     _add_column_if_not_exists(cursor, "slots", "comment", "TEXT NULL")
     _add_column_if_not_exists(cursor, "slots", "contact_info", "TEXT NULL")
     _add_column_if_not_exists(cursor, "slots", "booking_id", "TEXT NULL")
+    _add_column_if_not_exists(cursor, "slots", "mention", "TEXT NULL")
 
 
 def _seed_slots_if_empty(cursor):

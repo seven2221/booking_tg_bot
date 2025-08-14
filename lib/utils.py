@@ -80,16 +80,13 @@ def reject_booking(booking_id: int):
                 booking_type = NULL,
                 comment = NULL,
                 contact_info = NULL,
-                booking_id = NULL
+                booking_id = NULL,
+                mention = NULL
             WHERE booking_id = %s
         """, (booking_id,))
         conn.commit()
     finally:
         conn.close()
-
-
-def clear_booking_slots(booking_id: int):
-    reject_booking(booking_id)
 
 
 def format_booking_info(group):
@@ -119,25 +116,46 @@ def update_booking_status(date, time, status):
         conn.close()
 
 
-def book_slots(date_str, start_time, hours, user_id, group_name, booking_type, comment, contact_info):
+def book_slots(date_str, start_time, hours, user_id, group_name, booking_type, comment, contact_info, mention=None):
+    """
+    Обновляет существующие слоты на указанный период с заданными данными брони.
+
+    date_str: 'YYYY-MM-DD'
+    start_time: 'HH:MM'
+    hours: int
+    """
     booking_id = int(time.time())
     date_obj = datetime.strptime(date_str, "%Y-%m-%d")
     start_hour = int(start_time.split(":")[0])
+
     conn = get_connection()
     try:
         cur = conn.cursor()
         for i in range(hours):
             cur_hour = (start_hour + i) % 24
             cur_day = (date_obj + timedelta(days=(start_hour + i) // 24)).strftime("%Y-%m-%d")
-            cur.execute("INSERT INTO slots (date, time, user_id, group_name, booking_type, comment, contact_info, status, booking_id) VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s)", (
-                cur_day,
-                f"{cur_hour:02d}:00",
+            cur.execute("""
+                UPDATE slots
+                SET user_id = %s,
+                    group_name = %s,
+                    booking_type = %s,
+                    comment = %s,
+                    contact_info = %s,
+                    mention = %s,
+                    status = 1,
+                    booking_id = %s
+                WHERE date = %s AND time = %s
+                  AND status = 0
+            """, (
                 user_id,
                 group_name,
                 booking_type,
                 comment,
                 contact_info,
-                booking_id
+                mention,
+                booking_id,
+                cur_day,
+                f"{cur_hour:02d}:00"
             ))
         conn.commit()
     finally:

@@ -8,12 +8,12 @@ from lib.utils import (
     is_admin,
     reset_user_state,
     confirm_booking,
-    reject_booking,
     format_date,
+    get_user_id_by_booking,
 )
 from lib.schedule_tasks import (
     get_grouped_bookings_for_cancellation,
-    clear_booking_slots,
+    reject_booking,
     get_grouped_unconfirmed_bookings,
 )
 from lib.schedule_generator import create_schedule_grid_image, create_daily_schedule_image
@@ -252,7 +252,7 @@ def handle_decide_unconfirmed_booking(message):
         confirm_booking(booking_ids)
         admin_bot.send_message(message.chat.id, "Бронь подтверждена ✅")
     elif message.text == "❌ Отклонить":
-        clear_booking_slots(booking_ids)
+        reject_booking(booking_ids)
         reject_booking(booking_ids)
         admin_bot.send_message(message.chat.id, "Бронь отклонена ❌")
     else:
@@ -338,124 +338,146 @@ def handle_choose_booking_to_cancel_admin(message):
         admin_bot.send_message(message.chat.id, "Выберите бронь из списка.")
         return
     booking_ids = selected.get("ids", [])
-    clear_booking_slots(booking_ids)
+    reject_booking(booking_ids)
     admin_bot.send_message(message.chat.id, "Бронь отменена ✅")
     show_menu(message)
 
-@admin_bot.callback_query_handler(func=lambda call: ':' in call.data)
-def handle_callback_query(call):
+# @admin_bot.callback_query_handler(func=lambda call: ':' in call.data)
+# def handle_callback_query(call):
+#     try:
+#         action, booking_ids_str, user_id_str = call.data.split(":")
+#         booking_ids = list(map(int, booking_ids_str.split(',')))
+#         user_id = int(user_id_str)
+#     except ValueError:
+#         admin_bot.answer_callback_query(call.id, "❌ Ошибка при разборе данных.")
+#         return
+#     group_name = None
+#     date_str = None
+#     start_time = None
+#     end_time = None
+#     try:
+#         conn = get_connection()
+#         try:
+#             cur = conn.cursor()
+#             format_ids = ",".join(["%s"] * len(booking_ids))
+#             cur.execute(
+#                 f"SELECT date, time, group_name FROM slots "
+#                 f"WHERE id IN ({format_ids}) ORDER BY time",
+#                 booking_ids
+#             )
+#             rows = cur.fetchall()
+#             if not rows:
+#                 raise Exception("Не найдено данных о слотах")
+#             dates = sorted(set(r[0] for r in rows))
+#             times = [r[1] for r in rows]
+#             group_name = rows[0][2]
+#             if dates:
+#                 date_str = dates[0].strftime("%Y-%m-%d") if hasattr(dates[0], "strftime") else str(dates[0])
+#             start_time = times[0].strftime("%H:%M") if hasattr(times[0], "strftime") else str(times[0])
+#             end_time = times[-1].strftime("%H:%M") if hasattr(times[-1], "strftime") else str(times[-1])
+#         finally:
+#             conn.close()
+#         try:
+#             formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
+#         except Exception:
+#             formatted_date = date_str or "неизвестная дата"
+#         confirmation_message = (
+#             f"✅ Ваша бронь для группы «{group_name}» подтверждена!\n"
+#             f"Ожидаем вас {formatted_date} в {start_time}.\n"
+#             f"Связь с админом: @cyberocalypse"
+#         )
+#         decline_message = (
+#             f"❌ К сожалению, ваша бронь для группы «{group_name or 'неизвестная'}» "
+#             f"{formatted_date} в {start_time} отклонена.\n"
+#             f"Связь с админом: @cyberocalypse"
+#         )
+#         cancellation_message = (
+#             f"🚫 Ваша бронь для группы «{group_name or 'неизвестная'}» "
+#             f"{formatted_date} в {start_time} была отменена."
+#         )
+#         if action == "confirm":
+#             confirm_booking(booking_ids)
+#             try:
+#                 main_bot.send_message(user_id, confirmation_message)
+#             except Exception as e:
+#                 print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
+#             admin_bot.answer_callback_query(call.id, "✅ Бронь подтверждена.")
+#         elif action == "reject":
+#             reject_booking(booking_ids)
+#             try:
+#                 main_bot.send_message(user_id, decline_message)
+#             except Exception as e:
+#                 print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
+#             admin_bot.answer_callback_query(call.id, "❌ Бронь отклонена.")
+#         elif action == "cancel":
+#             reject_booking(booking_ids)
+#             try:
+#                 main_bot.send_message(user_id, cancellation_message)
+#             except Exception as e:
+#                 print(f"[Error] Не удалось уведомить пользователя {user_id}: {e}")
+#             admin_bot.answer_callback_query(call.id, "🚫 Бронь отменена.")
+#     except Exception as e:
+#         print(f"[Error] Не удалось обработать callback: {e}")
+#         admin_bot.answer_callback_query(call.id, "❌ Ошибка при обработке.")
+#     finally:
+#         try:
+#             admin_bot.edit_message_reply_markup(
+#                 chat_id=call.message.chat.id,
+#                 message_id=call.message.message_id,
+#                 reply_markup=None
+#             )
+#         except Exception as e:
+#             print(f"[Error] Не удалось удалить клавиатуру: {e}")
+
+
+@admin_bot.callback_query_handler(func=lambda callback: callback.data.startswith("confirm:"))
+def handle_confirm_booking(callback):
     try:
-        action, booking_ids_str, user_id_str = call.data.split(":")
-        booking_ids = list(map(int, booking_ids_str.split(',')))
-        user_id = int(user_id_str)
-    except ValueError:
-        admin_bot.answer_callback_query(call.id, "❌ Ошибка при разборе данных.")
+        booking_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        admin_bot.answer_callback_query(callback.id, "❌ Ошибка данных")
         return
-    group_name = None
-    date_str = None
-    start_time = None
-    end_time = None
-    try:
-        conn = get_connection()
-        try:
-            cur = conn.cursor()
-            format_ids = ",".join(["%s"] * len(booking_ids))
-            cur.execute(
-                f"SELECT date, time, group_name FROM slots "
-                f"WHERE id IN ({format_ids}) ORDER BY time",
-                booking_ids
-            )
-            rows = cur.fetchall()
-            if not rows:
-                raise Exception("Не найдено данных о слотах")
-            dates = sorted(set(r[0] for r in rows))
-            times = [r[1] for r in rows]
-            group_name = rows[0][2]
-            if dates:
-                date_str = dates[0].strftime("%Y-%m-%d") if hasattr(dates[0], "strftime") else str(dates[0])
-            start_time = times[0].strftime("%H:%M") if hasattr(times[0], "strftime") else str(times[0])
-            end_time = times[-1].strftime("%H:%M") if hasattr(times[-1], "strftime") else str(times[-1])
-        finally:
-            conn.close()
-        try:
-            formatted_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
-        except Exception:
-            formatted_date = date_str or "неизвестная дата"
-        confirmation_message = (
-            f"✅ Ваша бронь для группы «{group_name}» подтверждена!\n"
-            f"Ожидаем вас {formatted_date} в {start_time}.\n"
-            f"Связь с админом: @cyberocalypse"
-        )
-        decline_message = (
-            f"❌ К сожалению, ваша бронь для группы «{group_name or 'неизвестная'}» "
-            f"{formatted_date} в {start_time} отклонена.\n"
-            f"Связь с админом: @cyberocalypse"
-        )
-        cancellation_message = (
-            f"🚫 Ваша бронь для группы «{group_name or 'неизвестная'}» "
-            f"{formatted_date} в {start_time} была отменена."
-        )
-        if action == "confirm":
-            confirm_booking(booking_ids)
-            try:
-                main_bot.send_message(user_id, confirmation_message)
-            except Exception as e:
-                print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
-            admin_bot.answer_callback_query(call.id, "✅ Бронь подтверждена.")
-        elif action == "reject":
-            reject_booking(booking_ids)
-            try:
-                main_bot.send_message(user_id, decline_message)
-            except Exception as e:
-                print(f"[Error] Не удалось отправить сообщение пользователю {user_id}: {e}")
-            admin_bot.answer_callback_query(call.id, "❌ Бронь отклонена.")
-        elif action == "cancel":
-            reject_booking(booking_ids)
-            try:
-                main_bot.send_message(user_id, cancellation_message)
-            except Exception as e:
-                print(f"[Error] Не удалось уведомить пользователя {user_id}: {e}")
-            admin_bot.answer_callback_query(call.id, "🚫 Бронь отменена.")
-    except Exception as e:
-        print(f"[Error] Не удалось обработать callback: {e}")
-        admin_bot.answer_callback_query(call.id, "❌ Ошибка при обработке.")
-    finally:
-        try:
-            admin_bot.edit_message_reply_markup(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                reply_markup=None
-            )
-        except Exception as e:
-            print(f"[Error] Не удалось удалить клавиатуру: {e}")
-
-
-@admin_bot.callback_query_handler(func=lambda c: c.data.startswith("confirm:"))
-def cb_confirm(c):
-    booking_id = int(c.data.split(":")[1])
     confirm_booking(booking_id)
     user_id = get_user_id_by_booking(booking_id)
     if user_id:
-        main_bot.send_message(user_id, "Ваша бронь подтверждена ✅")
-    admin_bot.answer_callback_query(c.id, "Подтверждено")
-    admin_bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
+        try:
+            main_bot.send_message(user_id, "✅ Ваша бронь подтверждена!")
+        except Exception as e:
+            print(f"[Error] Не удалось уведомить пользователя {user_id}: {e}")
+    admin_bot.answer_callback_query(callback.id, "Бронь подтверждена ✅")
+    admin_bot.edit_message_reply_markup(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        reply_markup=None
+    )
 
 
-@admin_bot.callback_query_handler(func=lambda c: c.data.startswith("reject:"))
-def cb_reject(c):
-    booking_id = int(c.data.split(":")[1])
-    reject_booking(booking_id)
+@admin_bot.callback_query_handler(func=lambda callback: callback.data.startswith("reject:"))
+def handle_reject_booking(callback):
+    try:
+        booking_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        admin_bot.answer_callback_query(callback.id, "❌ Ошибка данных")
+        return
     user_id = get_user_id_by_booking(booking_id)
+    reject_booking(booking_id)
     if user_id:
-        main_bot.send_message(user_id, "К сожалению, ваша бронь отклонена ❌")
-    admin_bot.answer_callback_query(c.id, "Отклонено")
-    admin_bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
+        try:
+            main_bot.send_message(user_id, "❌ К сожалению, ваша бронь отклонена.")
+        except Exception as e:
+            print(f"[Error] Не удалось уведомить пользователя {user_id}: {e}")
+    admin_bot.answer_callback_query(callback.id, "Бронь отклонена ❌")
+    admin_bot.edit_message_reply_markup(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        reply_markup=None
+    )
 
 
 @admin_bot.callback_query_handler(func=lambda c: c.data.startswith("cancel:"))
 def cb_cancel(c):
     booking_id = int(c.data.split(":")[1])
-    clear_booking_slots(booking_id)
+    reject_booking(booking_id)
     user_id = get_user_id_by_booking(booking_id)
     if user_id:
         main_bot.send_message(user_id, "Ваша бронь отменена ❌")
