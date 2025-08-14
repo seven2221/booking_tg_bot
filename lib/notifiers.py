@@ -110,8 +110,9 @@ def notify_subscribers_for_cancellation(group, bot):
 
 def notify_booking_cancelled(user_id, bot, group_name=None, start_time=None, end_time=None, date_formatted=None):
     try:
+        safe_group = escape_markdown(group_name or "")
         message = (
-            f"❌ К сожалению, мы были вынуждены отменить вашу бронь для группы \n*{group_name}*\n"
+            f"❌ К сожалению, мы были вынуждены отменить вашу бронь для группы \n*{safe_group}*\n"
             f"{date_formatted} с {start_time} по {end_time}\nпо техническим причинам.\n"
             f"Приносим свои извинения за доставленные неудобства.\nСвязь с админом: @cyberocalypse"
         )

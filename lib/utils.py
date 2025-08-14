@@ -117,17 +117,9 @@ def update_booking_status(date, time, status):
 
 
 def book_slots(date_str, start_time, hours, user_id, group_name, booking_type, comment, contact_info, mention=None):
-    """
-    Обновляет существующие слоты на указанный период с заданными данными брони.
-
-    date_str: 'YYYY-MM-DD'
-    start_time: 'HH:MM'
-    hours: int
-    """
     booking_id = int(time.time())
     date_obj = datetime.strptime(date_str, "%Y-%m-%d")
     start_hour = int(start_time.split(":")[0])
-
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -162,3 +154,42 @@ def book_slots(date_str, start_time, hours, user_id, group_name, booking_type, c
         conn.close()
     return booking_id
 
+
+def escape_markdown(text: str) -> str:
+    if not isinstance(text, str):
+        return text
+    return text.replace("_", "\\_").replace("*", "\\*")
+
+def get_booking_info_by_id(booking_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+            SELECT *
+            FROM slots
+            WHERE booking_id = %s
+            ORDER BY date, time
+            """,
+            (booking_id,)
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        first_slot = rows[0]
+        last_slot = rows[-1]
+        start_date = first_slot["date"]
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+        start_dt = datetime.combine(start_date, datetime.strptime(first_slot["time"], "%H:%M").time())
+        end_date = last_slot["date"]
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+        end_dt = datetime.combine(end_date, datetime.strptime(last_slot["time"], "%H:%M").time()) + timedelta(hours=1)
+        booking_info = dict(first_slot)
+        booking_info["date"] = start_dt.strftime("%d.%m.%Y")
+        booking_info["start_time"] = start_dt.strftime("%H:%M")
+        booking_info["end_time"] = end_dt.strftime("%H:%M" if end_dt.date() == start_dt.date() else "%H:%M %d.%m.%Y")
+        return booking_info
+    finally:
+        conn.close()

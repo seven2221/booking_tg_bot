@@ -23,6 +23,8 @@ from lib.utils import (
     is_admin,
     reset_user_state,
     validate_input,
+    escape_markdown,
+    get_booking_info_by_id,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -214,28 +216,33 @@ def handle_hours_input(message):
         return main_bot.send_message(chat_id, "Введите корректное количество часов.")
     if not (1 <= hours <= 8):
         return main_bot.send_message(chat_id, "Максимум можно забронировать 8 часов.")
-    day = user_states[chat_id]["day"]
-    start_hour = int(user_states[chat_id]["time"][:2])
-    schedule = get_schedule_for_day(day, chat_id)
-    normalized = []
-    for item in schedule:
-        if isinstance(item, dict):
-            normalized.append(item)
-        else:
-            normalized.append({
-                "time": item[0],
-                "status": item[1],
-                "booking_id": item[2] if len(item) > 2 else None,
-                "group_name": item[3] if len(item) > 3 else None
-            })
-    for h in range(start_hour, start_hour + hours):
-        slot = next((s for s in normalized if int(s["time"][:2]) == h), None)
+    start_day = user_states[chat_id]["day"]
+    start_time_str = user_states[chat_id]["time"]
+    start_hour = int(start_time_str[:2])
+    for i in range(hours):
+        cur_hour = (start_hour + i) % 24
+        cur_date = datetime.strptime(start_day, "%Y-%m-%d") + timedelta(days=(start_hour + i) // 24)
+        cur_date_str = cur_date.strftime("%Y-%m-%d")
+        day_schedule = get_schedule_for_day(cur_date_str, chat_id)
+        normalized = []
+        for item in day_schedule:
+            if isinstance(item, dict):
+                normalized.append(item)
+            else:
+                normalized.append({
+                    "time": item[0],
+                    "status": item[1],
+                    "booking_id": item[2] if len(item) > 2 else None,
+                    "group_name": item[3] if len(item) > 3 else None
+                })
+        slot = next((s for s in normalized if int(s["time"][:2]) == cur_hour), None)
         if not slot or slot["status"] != 0:
             main_bot.send_message(chat_id, "Этот временной интервал уже занят. Выберите другое время.")
             return show_free_days(message)
     user_states[chat_id]["hours"] = hours
     user_states[chat_id]["step"] = "waiting_for_group_name"
     main_bot.send_message(chat_id, "Введите название группы:", reply_markup=types.ReplyKeyboardRemove())
+
 
 @main_bot.message_handler(func=lambda m: user_states.get(m.chat.id, {}).get("step") == "waiting_for_group_name")
 def handle_group_name_input(message):
@@ -327,13 +334,19 @@ def handle_comment_input(message):
     contact_info = user_states[chat_id]["contact"]
     end_time = f"{int(selected_time[:2]) + hours:02d}:00"
     if message.from_user.username:
-        mention = f"@{message.from_user.username}"
+        mention_raw = f"@{message.from_user.username}"
     elif contact_info.startswith('@'):
-        mention = contact_info
+        mention_raw = contact_info
     elif contact_info.replace('+', '').isdigit():
-        mention = f"[{message.from_user.first_name}](tel:{contact_info})"
+        mention_raw = f"[{message.from_user.first_name}](tel:{contact_info})"
     else:
-        mention = f"{message.from_user.first_name} (ID: {message.from_user.id})"
+        mention_raw = f"{message.from_user.first_name} (ID: {message.from_user.id})"
+    from lib.utils import escape_markdown
+    mention_safe = escape_markdown(mention_raw)
+    safe_group = escape_markdown(group_name or "")
+    safe_type = escape_markdown(booking_type or "")
+    safe_comment = escape_markdown(comment or "—")
+    safe_contact = escape_markdown(contact_info or "—")
     booking_id = book_slots(
         selected_day,
         selected_time,
@@ -343,7 +356,7 @@ def handle_comment_input(message):
         booking_type,
         comment,
         contact_info,
-        mention
+        mention_safe
     )
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("Забронировать другое время", "На главную")
@@ -359,11 +372,11 @@ def handle_comment_input(message):
         "🔔 Новая бронь!\n"
         f"Дата: {selected_day}\n"
         f"Время: {selected_time}-{end_time}\n"
-        f"Группа: {group_name}\n"
-        f"Тип: {booking_type}\n"
-        f"Комментарий: {comment or '—'}\n"
-        f"Контакт: {contact_info or '—'}\n"
-        f"Создатель: {mention}"
+        f"Группа: {safe_group}\n"
+        f"Тип: {safe_type}\n"
+        f"Комментарий: {safe_comment}\n"
+        f"Контакт: {safe_contact}\n"
+        f"Создатель: {mention_safe}"
     )
     inline_kb = types.InlineKeyboardMarkup()
     inline_kb.add(
