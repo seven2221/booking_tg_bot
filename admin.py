@@ -5,6 +5,10 @@ from datetime import datetime, timedelta
 from telebot import types
 from dotenv import load_dotenv
 from lib.db_init import get_connection
+from lib.notifiers import (
+    notify_subscribers_for_cancellation, 
+    notify_booking_cancelled,
+)
 from lib.utils import (
     is_admin,
     reset_user_state,
@@ -13,6 +17,7 @@ from lib.utils import (
     get_user_id_by_booking,
     escape_markdown,
     get_booking_info_by_id,
+    get_slot_ids_by_booking,
 )
 from lib.schedule_tasks import (
     get_grouped_bookings_for_cancellation,
@@ -548,15 +553,43 @@ def handle_reject_booking(callback):
     admin_bot.edit_message_reply_markup(callback.message.chat.id, callback.message.message_id, reply_markup=None)
 
 
-@admin_bot.callback_query_handler(func=lambda c: c.data.startswith("cancel:"))
-def cb_cancel(c):
-    booking_id = int(c.data.split(":")[1])
-    reject_booking(booking_id)
+@admin_bot.callback_query_handler(func=lambda c: c.data.startswith("cancel_booking_id:"))
+def cb_cancel_by_booking_id(c):
+    try:
+        booking_id = int(c.data.split(":")[1])
+    except Exception:
+        admin_bot.answer_callback_query(c.id, "Ошибка: неверный booking_id")
+        return
     user_id = get_user_id_by_booking(booking_id)
-    if user_id:
-        main_bot.send_message(user_id, "Ваша бронь отменена ❌")
+    info = get_booking_info_by_id(booking_id)
+    slot_ids = []
+    try:
+        slot_ids = get_slot_ids_by_booking(booking_id)
+    except Exception:
+        slot_ids = []
+    if slot_ids:
+        try:
+            notify_subscribers_for_cancellation({"ids": slot_ids}, main_bot)
+        except Exception as e:
+            logger.error(f"Не удалось оповестить подписчиков: {e}")
+    try:
+        reject_booking(booking_id)
+    except Exception as e:
+        admin_bot.answer_callback_query(c.id, f"Ошибка отмены: {e}")
+        return
+    if user_id and info:
+        group_name = info.get("group_name") or ""
+        start_time = info.get("start_time") or ""
+        end_time = info.get("end_time") or ""
+        date_str = info.get("date") or ""
+        try:
+            main_bot.send_message(
+                int(user_id),
+                f"🚫 Ваша бронь для группы «{group_name or '-неизвестная группа-'}» {date_str}  {start_time}–{end_time} была отменена администратором по вашей заявке.",
+            )
+        except Exception as e:
+            logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
     admin_bot.answer_callback_query(c.id, "Отменено")
-    admin_bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
 
 
 def main():

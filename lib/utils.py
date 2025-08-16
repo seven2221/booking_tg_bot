@@ -68,25 +68,25 @@ def confirm_booking(booking_id: int):
         conn.close()
 
 
-def reject_booking(booking_id: int):
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE slots
-            SET status = 0,
-                user_id = NULL,
-                group_name = NULL,
-                booking_type = NULL,
-                comment = NULL,
-                contact_info = NULL,
-                booking_id = NULL,
-                mention = NULL
-            WHERE booking_id = %s
-        """, (booking_id,))
-        conn.commit()
-    finally:
-        conn.close()
+# def reject_booking(booking_id: int):
+#     conn = get_connection()
+#     try:
+#         cur = conn.cursor()
+#         cur.execute("""
+#             UPDATE slots
+#             SET status = 0,
+#                 user_id = NULL,
+#                 group_name = NULL,
+#                 booking_type = NULL,
+#                 comment = NULL,
+#                 contact_info = NULL,
+#                 booking_id = NULL,
+#                 mention = NULL
+#             WHERE booking_id = %s
+#         """, (booking_id,))
+#         conn.commit()
+#     finally:
+#         conn.close()
 
 
 def format_booking_info(group):
@@ -194,3 +194,21 @@ def get_booking_info_by_id(booking_id: int):
         return booking_info
     finally:
         conn.close()
+
+
+def get_slot_ids_by_booking(booking_id: int) -> list[int]:
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM slots WHERE booking_id = %s", (booking_id,))
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    ids = []
+    for r in rows:
+        v = r[0] if isinstance(r, (list, tuple)) else r
+        try:
+            ids.append(int(v))
+        except Exception:
+            continue
+    return ids

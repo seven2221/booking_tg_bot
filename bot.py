@@ -427,97 +427,225 @@ def send_date_selection_keyboard(chat_id: int, dates, bot):
     bot.send_message(chat_id, "Выберите дату:", reply_markup=markup)
 
 
-@main_bot.message_handler(func=lambda msg: msg.text == "Отменить бронь")
-def handle_cancel_booking(message):
-    chat_id = message.chat.id
+def _get_user_booking_ids(user_id: int) -> list[int]:
     conn = get_connection()
     try:
         cur = conn.cursor()
-        today = datetime.now().strftime("%Y-%m-%d")
         cur.execute(
-            "SELECT DISTINCT date FROM slots "
-            "WHERE status IN (1, 2) AND user_id = %s AND date >= %s "
-            "ORDER BY date",
-            (chat_id, today),
+            "SELECT DISTINCT booking_id FROM slots "
+            "WHERE user_id = %s AND booking_id IS NOT NULL AND status IN (1,2)",
+            (user_id,),
         )
-        all_dates = [row[0] for row in cur.fetchall()]
+        rows = cur.fetchall()
     finally:
         conn.close()
-    valid_dates = []
-    for date_str in all_dates:
-        bookings = get_grouped_bookings_for_cancellation(date_str, chat_id)
-        if bookings:
-            valid_dates.append(date_str)
-    if not valid_dates:
-        main_bot.send_message(chat_id, "У вас нет активных броней.")
+    all_ids = []
+    for r in rows:
+        v = r[0] if isinstance(r, (list, tuple)) else r
+        if v is None:
+            continue
+        try:
+            all_ids.append(int(v))
+        except Exception:
+            try:
+                all_ids.append(int(str(v).strip()))
+            except Exception:
+                continue
+    now = datetime.now()
+    cutoff = now + timedelta(hours=24)
+    filtered_ids = []
+    for bid in all_ids:
+        info = None
+        try:
+            info = get_booking_info_by_id(bid)
+        except Exception:
+            info = None
+        if not info:
+            continue
+        try:
+            start_date = datetime.strptime(info["date"], "%d.%m.%Y").date()
+            start_dt = datetime.combine(
+                start_date,
+                datetime.strptime(info["start_time"], "%H:%M").time()
+            )
+            if start_dt <= now:
+                continue
+            if start_dt <= cutoff:
+                continue
+            end_str = (info.get("end_time") or "").strip()
+            try:
+                parts = end_str.split()
+                if len(parts) == 1:
+                    end_dt = datetime.combine(
+                        start_date,
+                        datetime.strptime(parts[0], "%H:%M").time()
+                    )
+                else:
+                    end_time_only, end_date_human = parts
+                    end_dt = datetime.combine(
+                        datetime.strptime(end_date_human, "%d.%m.%Y").date(),
+                        datetime.strptime(end_time_only, "%H:%M").time()
+                    )
+            except Exception:
+                end_dt = start_dt + timedelta(hours=1)
+            if end_dt <= now:
+                continue
+            filtered_ids.append(bid)
+        except Exception:
+            continue
+    return filtered_ids
+
+
+@main_bot.message_handler(func=lambda msg: msg.text == "Отменить бронь")
+def handle_cancel_booking(message):
+    chat_id = message.chat.id
+    booking_ids = _get_user_booking_ids(chat_id)
+    if not booking_ids:
+        main_bot.send_message(chat_id, "У вас нет активных будущих броней, доступных для отмены.")
         show_menu(message)
         return
-    state = {"step": "choose_date_for_cancellation", "valid_dates": valid_dates}
-    iso_map = {format_date(d): d for d in valid_dates}
-    state["date_btn_map_cancel"] = iso_map
-    user_states[chat_id] = state
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for label in iso_map.keys():
-        markup.add(types.KeyboardButton(label))
+    items = []
+    for bid in booking_ids:
+        try:
+            info = get_booking_info_by_id(bid)
+        except Exception:
+            info = None
+        if not info:
+            continue
+        start_time = (info.get("start_time") or "").strip()
+        end_time = (info.get("end_time") or "").strip()
+        group_name = (info.get("group_name") or "").strip()
+        start_date_human = (info.get("date") or "").strip()
+        try:
+            dt = datetime.strptime(start_date_human, "%d.%m.%Y").date()
+            iso_date = dt.strftime("%Y-%m-%d")
+            weekday_label = format_date(iso_date).split()[-1]
+        except Exception:
+            weekday_label = ""
+        try:
+            ddmm = datetime.strptime(start_date_human, "%d.%m.%Y").strftime("%d.%m")
+        except Exception:
+            ddmm = start_date_human[:5] if len(start_date_human) >= 5 else start_date_human
+        date_compact = f"{ddmm} {weekday_label}".strip()
+        label = f"{date_compact} {start_time}-{end_time}  -  {group_name}".strip()
+        items.append((label, bid))
+    if not items:
+        main_bot.send_message(chat_id, "У вас нет активных будущих броней, доступных для отмены.")
+        show_menu(message)
+        return
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    row = []
+    for i, (label, _bid) in enumerate(items, start=1):
+        row.append(types.KeyboardButton(label))
+        if i % 3 == 0:
+            markup.add(*row)
+            row = []
+    if row:
+        markup.add(*row)
     markup.add(types.KeyboardButton("На главную"))
-    main_bot.send_message(chat_id, "Выберите дату:", reply_markup=markup)
+    user_states[chat_id] = {
+        "step": "choose_booking_to_cancel_by_id",
+        "booking_label_map": {label: bid for label, bid in items},
+    }
+    main_bot.send_message(chat_id, "Выберите бронь для отмены:", reply_markup=markup)
 
 
-@main_bot.message_handler(
-    func=lambda msg: isinstance(user_states.get(msg.chat.id), dict)
-    and user_states[msg.chat.id].get("step") == "choose_date_for_cancellation"
-)
-def handle_date_chosen_for_cancellation(message):
+@main_bot.message_handler(func=lambda msg: isinstance(user_states.get(msg.chat.id), dict) and user_states[msg.chat.id].get("step") == "choose_booking_to_cancel_by_id")
+def handle_choose_booking_to_cancel_by_id(message):
     chat_id = message.chat.id
-    if message.text == "На главную":
-        return_to_main_menu(message)
+    text = (message.text or "").strip()
+    if text == "На главную":
+        reset_user_state(chat_id, user_states)
+        show_menu(message)
         return
     state = user_states.get(chat_id, {}) or {}
-    iso_map = state.get("date_btn_map_cancel", {})
-    selected_date = iso_map.get(message.text.strip())
-    if not selected_date:
-        main_bot.send_message(chat_id, "Выберите одну из предложенных дат.")
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        for label in iso_map.keys():
+    label_map = state.get("booking_label_map", {})
+    booking_id = label_map.get(text)
+    if not booking_id:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        for label in label_map.keys():
             markup.add(types.KeyboardButton(label))
         markup.add(types.KeyboardButton("На главную"))
-        main_bot.send_message(chat_id, "Выберите дату:", reply_markup=markup)
+        main_bot.send_message(chat_id, "Пожалуйста, выберите бронь из списка:", reply_markup=markup)
         return
-    valid_dates = [d if isinstance(d, str) else d.strftime("%Y-%m-%d") for d in state.get("valid_dates", [])]
-    if selected_date not in valid_dates:
-        main_bot.send_message(chat_id, "Выберите одну из предложенных дат.")
+    info = get_booking_info_by_id(booking_id)
+    if not info:
+        main_bot.send_message(chat_id, "Не удалось получить информацию о брони. Попробуйте позже.")
+        reset_user_state(chat_id, user_states)
+        show_menu(message)
         return
-    bookings = get_grouped_bookings_for_cancellation(selected_date, chat_id)
-    now = datetime.now()
-    deadline = now + timedelta(hours=24)
-    filtered_bookings = []
-    for booking in bookings:
-        booking_start = datetime.strptime(
-            f"{booking['date_str']} {booking['start_time'].strftime('%H:%M')}",
-            "%Y-%m-%d %H:%M",
-        )
-        if booking_start > deadline:
-            filtered_bookings.append(booking)
-    if not filtered_bookings:
-        main_bot.send_message(
-            chat_id,
-            "У вас нет броней, доступных для отмены в этот день.\n"
-            "Отмена возможна только более чем за 24 часа до начала брони.\n\n"
-            "Пожалуйста, свяжитесь с админом: @cyberokolade",
-        )
-        send_date_selection_keyboard(chat_id, state.get("valid_dates", []), main_bot)
-        state["step"] = "choose_date_for_cancellation"
-        user_states[chat_id] = state
-        return
-    state.update(
-        {
-            "step": "choose_booking_for_cancellation",
-            "selected_date": selected_date,
-            "bookings": filtered_bookings,
-        }
-    )
+    group_name = info.get("group_name") or "—"
+    date_str = info.get("date") or "—"
+    start_time = info.get("start_time") or "—"
+    end_time = info.get("end_time") or "—"
+    state["step"] = "confirm_user_cancellation"
+    state["pending_cancel_booking_id"] = booking_id
     user_states[chat_id] = state
-    send_cancellation_options(chat_id, filtered_bookings)
+    confirm_kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    confirm_kb.add(
+        types.KeyboardButton("Да, отменить"),
+        types.KeyboardButton("Нет, вернуться в меню"),
+    )
+    main_bot.send_message(
+        chat_id,
+        f"Вы уверены, что хотите отменить бронь?\n"
+        f"Дата: {date_str}\n"
+        f"Время: {start_time}–{end_time}\n"
+        f"Группа: {group_name}",
+        reply_markup=confirm_kb,
+    )
+
+
+@main_bot.message_handler(func=lambda m: isinstance(user_states.get(m.chat.id), dict) and user_states[m.chat.id].get("step") == "confirm_user_cancellation")
+def handle_user_confirm_cancellation(message):
+    chat_id = message.chat.id
+    text = (message.text or "").strip()
+    state = user_states.get(chat_id, {}) or {}
+    booking_id = state.get("pending_cancel_booking_id")
+    if text == "Нет, вернуться в меню":
+        reset_user_state(chat_id, user_states)
+        show_menu(message)
+        return
+    if text != "Да, отменить":
+        confirm_kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        confirm_kb.add(
+            types.KeyboardButton("Да, отменить"),
+            types.KeyboardButton("Нет, вернуться в меню"),
+        )
+        main_bot.send_message(chat_id, "Пожалуйста, подтвердите отмену или вернитесь в меню.", reply_markup=confirm_kb)
+        return
+    info = get_booking_info_by_id(booking_id)
+    if not info:
+        main_bot.send_message(chat_id, "Не удалось получить информацию о брони. Попробуйте позже.")
+        reset_user_state(chat_id, user_states)
+        show_menu(message)
+        return
+    group_name = (info.get("group_name") or "").strip()
+    date_str = (info.get("date") or "").strip()
+    start_time = (info.get("start_time") or "").strip()
+    end_time = (info.get("end_time") or "").strip()
+    inline_kb = InlineKeyboardMarkup()
+    inline_kb.add(
+        InlineKeyboardButton("🚫 Подтвердить отмену", callback_data=f"cancel_booking_id:{booking_id}")
+    )
+    note = (
+        "🚫 Запрос на отмену брони!\n"
+        f"_Дата:_ *{date_str}*\n"
+        f"_Время:_ *{start_time}–{end_time}*\n"
+        f"_Группа:_ *{escape_markdown(group_name)}*"
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            admin_bot.send_message(admin_id, note, parse_mode="Markdown", reply_markup=inline_kb)
+        except Exception as e:
+            logger.error(f"Не удалось отправить запрос на отмену админу {admin_id}: {e}")
+    main_bot.send_message(
+        chat_id,
+        "Запрос на отмену брони отправлен администратору. Пожалуйста, ожидайте подтверждения.",
+        reply_markup=types.ReplyKeyboardRemove(),
+    )
+    reset_user_state(chat_id, user_states)
+    show_menu(message)
 
 
 def send_cancellation_options(chat_id, bookings):
