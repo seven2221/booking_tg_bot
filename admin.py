@@ -1,4 +1,5 @@
 import os
+import logging
 import telebot
 from datetime import datetime, timedelta
 from telebot import types
@@ -19,6 +20,9 @@ from lib.schedule_tasks import (
     get_grouped_unconfirmed_bookings,
 )
 from lib.schedule_generator import create_schedule_grid_image, create_daily_schedule_image
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -55,7 +59,11 @@ def handle_start(message):
 @admin_bot.message_handler(func=lambda msg: msg.text == "Посмотреть расписание")
 def view_schedule(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row(types.KeyboardButton("Расписание на 28 дней"), types.KeyboardButton("Расписание на сегодня"))
+    markup.row(
+        types.KeyboardButton("Расписание на 28 дней"),
+        types.KeyboardButton("Расписание на сегодня"),
+        types.KeyboardButton("Расписание на конкретный день")
+    )
     admin_bot.send_message(message.chat.id, "Выберите тип расписания:", reply_markup=markup)
     reset_user_state(message.chat.id, user_states)
 
@@ -85,14 +93,17 @@ def view_today_schedule(message):
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "Картинкой")
 def send_schedule_image(message):
-    path = create_daily_schedule_image(message.chat.id)
+    today_iso = datetime.now().strftime("%Y-%m-%d")
+    path = create_daily_schedule_image(today_iso, requester_id=message.chat.id)
     if path:
-        with open(path, "rb") as img:
-            admin_bot.send_photo(message.chat.id, img, caption="Расписание на сегодня:")
         try:
-            os.remove(path)
-        except Exception:
-            pass
+            with open(path, "rb") as img:
+                admin_bot.send_photo(message.chat.id, img, caption="Расписание на сегодня:")
+        finally:
+            try:
+                os.remove(path)
+            except Exception:
+                pass
     else:
         admin_bot.send_message(message.chat.id, "Нет данных для отображения расписания на сегодня.")
     reset_user_state(message.chat.id, user_states)
@@ -101,64 +112,124 @@ def send_schedule_image(message):
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "Списком")
 def send_schedule_list(message):
-    chat_id = message.chat.id
-    today = datetime.now().strftime("%Y-%m-%d")
-    tomorrow = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-    conn = get_connection()
     try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT date, time, group_name, contact_info, booking_type, comment "
-            "FROM slots WHERE date IN (%s, %s) AND status != 0 ORDER BY date, time",
-            (today, tomorrow),
-        )
-        rows = cur.fetchall()
-    finally:
-        conn.close()
-    if not rows:
-        admin_bot.send_message(chat_id, "На сегодня нет записей в расписании.")
+        chat_id = message.chat.id
+        today_iso = datetime.now().strftime("%Y-%m-%d")
+        sql = f'SELECT DISTINCT booking_id FROM slots WHERE `date` = "{today_iso}" AND status != 0 AND booking_id IS NOT NULL ORDER BY booking_id'
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(sql)
+            id_rows = cur.fetchall()
+        finally:
+            conn.close()
+        if id_rows:
+            sample = id_rows[:5]
+        if not id_rows:
+            admin_bot.send_message(chat_id, "На сегодня нет записей в расписании.")
+            reset_user_state(chat_id, user_states)
+            show_menu(message)
+            return
+        booking_ids = []
+        for idx, row in enumerate(id_rows):
+            logger.info("[schedule_list] id_row[%s]=type:%s, value:%s", idx, type(row).__name__, row)
+            if not row:
+                continue
+            v = row[0] if isinstance(row, (list, tuple)) else row
+            if v is None:
+                continue
+            s = str(v).strip()
+            if not s:
+                continue
+            try:
+                booking_ids.append(int(s))
+            except Exception:
+                booking_ids.append(s)
+        if not booking_ids:
+            admin_bot.send_message(chat_id, "На сегодня нет записей в расписании.")
+            reset_user_state(chat_id, user_states)
+            show_menu(message)
+            return
+        seen = set()
+        uniq_ids = []
+        for b in booking_ids:
+            if b in seen:
+                continue
+            seen.add(b)
+            uniq_ids.append(b)
+        day_start = datetime.strptime(today_iso + " 00:00", "%Y-%m-%d %H:%M")
+        day_end = day_start + timedelta(days=1)
+        items = []
+        for bid in uniq_ids:
+            try:
+                info = get_booking_info_by_id(bid)
+                if not info:
+                    continue
+                try:
+                    start_dt = datetime.strptime(f"{info['date']} {info['start_time']}", "%d.%m.%Y %H:%M")
+                except Exception as e:
+                    print(e)
+                    continue
+                end_str = (info.get("end_time") or "").strip()
+                parts = end_str.split()
+                if len(parts) == 1 and parts[0]:
+                    try:
+                        end_dt = datetime.strptime(f"{info['date']} {parts}", "%d.%m.%Y %H:%M")
+                        end_human = parts
+                    except Exception as e:
+                        print(e)
+                        end_dt = start_dt + timedelta(hours=1)
+                        end_human = (start_dt + timedelta(hours=1)).strftime("%H:%M")
+                elif len(parts) == 2:
+                    end_time_only, end_date_human = parts
+                    try:
+                        end_dt = datetime.strptime(f"{end_date_human} {end_time_only}", "%d.%m.%Y %H:%M")
+                        end_human = end_time_only
+                    except Exception as e:
+                        print(e)
+                        end_dt = start_dt + timedelta(hours=1)
+                        end_human = (start_dt + timedelta(hours=1)).strftime("%H:%M")
+                else:
+                    end_dt = start_dt + timedelta(hours=1)
+                    end_human = (start_dt + timedelta(hours=1)).strftime("%H:%M")
+                if end_dt <= day_start or start_dt >= day_end:
+                    print("[schedule_list] skip bid=%s due to no overlap with today", bid)
+                    continue
+                items.append({
+                    "start_dt": start_dt,
+                    "start_human": info.get("start_time", start_dt.strftime("%H:%M")),
+                    "end_human": end_human,
+                    "group": info.get("group_name") or "—",
+                    "type": info.get("booking_type") or "—",
+                    "comment": info.get("comment") or "—",
+                    "contact": info.get("contact_info") or "—",
+                })
+            except Exception as e:
+                print(e)
+        if not items:
+            admin_bot.send_message(chat_id, "На сегодня нет записей в расписании.")
+            reset_user_state(chat_id, user_states)
+            show_menu(message)
+            return
+        items.sort(key=lambda x: x["start_dt"])
+        lines = [f"Расписание на сегодня ({datetime.now().strftime('%d.%m.%Y')}):"]
+        for it in items:
+            lines.append(f"{it['start_human']}–{it['end_human']}  ·|·  {it['group']}  ·|·  {it['type']}  ·|·  {it['contact']}  ·|·  {it['comment']}")
+        admin_bot.send_message(chat_id, "\n".join(lines))
+        reset_user_state(chat_id, user_states)
         show_menu(message)
-        return
-    def is_consecutive(prev_date, prev_time, curr_date, curr_time):
-        if not prev_time:
-            return False
-        prev_dt = datetime.strptime(f"{prev_date} {prev_time}", "%Y-%m-%d %H:%M")
-        curr_dt = datetime.strptime(f"{curr_date} {curr_time}", "%Y-%m-%d %H:%M")
-        return (curr_dt - prev_dt) == timedelta(hours=1)
-    output_groups = []
-    current_group = None
-    start_time = None
-    start_date = None
-    prev_time = None
-    prev_date = None
-    for row in rows:
-        date_str, time_str, group_name, contact_info, booking_type, comment = row
-        if group_name is None and contact_info is None and booking_type is None and comment is None:
-            continue
-        group_data = (group_name or "", contact_info or "", booking_type or "", comment or "")
-        if current_group is None:
-            current_group = group_data
-            start_time = time_str
-            start_date = date_str
-        elif group_data != current_group or not is_consecutive(prev_date, prev_time, date_str, time_str):
-            end_dt = datetime.strptime(f"{prev_date} {prev_time}", "%Y-%m-%d %H:%M") + timedelta(hours=1)
-            output_groups.append((start_date, start_time, end_dt, current_group))
-            current_group = group_data
-            start_time = time_str
-            start_date = date_str
-        prev_time = time_str
-        prev_date = date_str
-    if current_group and prev_time and prev_date:
-        end_dt = datetime.strptime(f"{prev_date} {prev_time}", "%Y-%m-%d %H:%M") + timedelta(hours=1)
-        output_groups.append((start_date, start_time, end_dt, current_group))
-    now = datetime.now()
-    for start_date, start_time, end_dt, group_data in output_groups:
-        start_dt = datetime.strptime(f"{start_date} {start_time}", "%Y-%m-%d %H:%M")
-        if end_dt <= now or start_date != today:
-            continue
-        send_schedule_list_notification(chat_id, start_dt.strftime("%H:%M"), end_dt.strftime("%H:%M"), group_data)
-    reset_user_state(chat_id, user_states)
-    show_menu(message)
+    except Exception as e:
+        print(e)
+        try:
+            admin_bot.send_message(message.chat.id, "Произошла ошибка при формировании списка расписания.")
+        except Exception:
+            pass
+        try:
+            reset_user_state(message.chat.id, user_states)
+            show_menu(message)
+        except Exception:
+            pass
+
 
 
 def send_schedule_list_notification(chat_id, start_time, end_time, group_data):
@@ -178,6 +249,90 @@ def send_schedule_list_notification(chat_id, start_time, end_time, group_data):
         admin_bot.send_message(chat_id, note, parse_mode="Markdown")
     except Exception as e:
         print(f"[Error] Can't send notification: {e}")
+
+
+@admin_bot.message_handler(func=lambda msg: msg.text == "Расписание на конкретный день")
+def view_schedule_specific_day(message):
+    if not is_admin(message.from_user.id):
+        admin_bot.send_message(message.chat.id, "❌ Нет прав.")
+        return
+    reset_user_state(message.chat.id, user_states)
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT DISTINCT date
+            FROM slots
+            WHERE date >= %s
+              AND time BETWEEN '11:00' AND '23:00'
+              AND status IN (1, 2)
+            ORDER BY date
+            """,
+            (today,)
+        )
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    iso_dates = []
+    for (d,) in rows:
+        iso = d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)
+        iso_dates.append(iso)
+    if not iso_dates:
+        admin_bot.send_message(message.chat.id, "Нет занятых слотов в ближайшие дни.")
+        show_menu(message)
+        return
+    btn_map = {format_date(iso): iso for iso in iso_dates}
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    labels = list(btn_map.keys())
+    for i in range(0, len(labels), 3):
+        row = [types.KeyboardButton(lbl) for lbl in labels[i:i+3]]
+        markup.add(*row)
+    markup.add(types.KeyboardButton("На главную"))
+    user_states[message.chat.id] = {
+        "step": "choose_specific_day",
+        "date_btn_map": btn_map,
+    }
+    admin_bot.send_message(message.chat.id, "Выберите день:", reply_markup=markup)
+
+
+@admin_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "choose_specific_day")
+def handle_choose_specific_day(message):
+    if message.text == "На главную":
+        show_menu(message)
+        return
+    state = user_states.get(message.chat.id, {}) or {}
+    btn_map = state.get("date_btn_map", {}) or {}
+    incoming = " ".join((message.text or "").split())
+    selected_iso = btn_map.get(incoming)
+    if not selected_iso:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+        labels = list(btn_map.keys())
+        for i in range(0, len(labels), 3):
+            row = [types.KeyboardButton(lbl) for lbl in labels[i:i+3]]
+            markup.add(*row)
+        markup.add(types.KeyboardButton("На главную"))
+        admin_bot.send_message(message.chat.id, "Пожалуйста, выберите дату из списка:", reply_markup=markup)
+        return
+    try:
+        path = create_daily_schedule_image(selected_iso, requester_id=message.chat.id)
+    except Exception as e:
+        admin_bot.send_message(message.chat.id, f"Ошибка при построении расписания: {e}")
+        return
+    if path:
+        try:
+            with open(path, "rb") as img:
+                admin_bot.send_photo(message.chat.id, img, caption=f"Расписание на {format_date(selected_iso)}:")
+        finally:
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+    else:
+        admin_bot.send_message(message.chat.id, "Нет данных для отображения на выбранный день.")
+    reset_user_state(message.chat.id, user_states)
+    show_menu(message)
 
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "Просмотреть неподтвержденные брони")

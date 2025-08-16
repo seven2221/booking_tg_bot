@@ -189,7 +189,6 @@ def handle_day_selection(message):
     main_bot.send_message(chat_id, "\n".join(text_lines), reply_markup=markup)
 
 
-
 @main_bot.message_handler(func=lambda msg: msg.text == "Выбрать другой день")
 def handle_choose_other_day(message):
     reset_user_state(message.chat.id, user_states)
@@ -304,11 +303,7 @@ def show_comment_prompt(chat_id: int):
     )
 
 
-@main_bot.message_handler(
-    func=lambda msg: isinstance(user_states.get(msg.chat.id), dict)
-    and user_states[msg.chat.id].get("step") == "waiting_for_comment"
-    and msg.text == "Прайс"
-)
+@main_bot.message_handler(func=lambda msg: isinstance(user_states.get(msg.chat.id), dict) and user_states[msg.chat.id].get("step") == "waiting_for_comment" and msg.text == "Прайс")
 def show_price_list_during_booking(message):
     chat_id = message.chat.id
     try:

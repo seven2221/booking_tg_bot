@@ -185,9 +185,12 @@ def _multiline_center(draw, text, x, y, w, h, font, cell_padding=10, max_lines=2
         ty += draw.textbbox((0, 0), l, font=font)[3]
 
 
-def create_daily_schedule_image(requester_id=None):
-    today = datetime.now().strftime("%Y-%m-%d")
-    raw_slots = get_daily_schedule_from_db(today)
+def create_daily_schedule_image(date_value, requester_id=None):
+    if hasattr(date_value, "strftime"):
+        target_date = date_value.strftime("%Y-%m-%d")
+    else:
+        target_date = str(date_value)
+    raw_slots = get_daily_schedule_from_db(target_date)
     if not raw_slots:
         return None
     cell_padding = 10
