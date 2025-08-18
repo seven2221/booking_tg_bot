@@ -54,16 +54,14 @@ def add_subscriber_to_slot(date: str, time: str, user_id: int):
         existing_raw = row[0] if row else ""
         existing = [s.strip() for s in str(existing_raw or "").split(",") if s and s.strip()]
         subs = set(existing)
-        before = sorted(subs)
         subs.add(str(user_id))
-        after = sorted(subs)
-        updated = ",".join(after)
+        updated = ",".join(sorted(subs))
         cur.execute(
             "UPDATE slots SET subscribed_users = %s WHERE date = %s AND LEFT(time,5) = %s",
             (updated, date, time),
         )
         conn.commit()
-    except Exception as e:
+    except Exception:
         try:
             conn.rollback()
         except Exception:

@@ -737,6 +737,40 @@ def handle_user_choose_booking_for_cancellation(message):
 
 ### Оформление подписки ###
 
+def _get_already_subscribed_times(user_id: int, date_iso: str) -> list[str]:
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        user_str = str(user_id)
+        cur.execute(
+            """
+            SELECT LEFT(time,5) AS t
+            FROM slots
+            WHERE date = %s
+              AND status IN (1, 2)
+              AND LEFT(time,5) >= '11:00'
+              AND LEFT(time,5) <= '23:00'
+              AND (
+                    subscribed_users = %s
+                 OR subscribed_users LIKE %s
+                 OR subscribed_users LIKE %s
+                 OR subscribed_users LIKE %s
+              )
+            ORDER BY t
+            """,
+            (
+                date_iso,
+                user_str,
+                f"{user_str},%",
+                f"%,{user_str},%",
+                f"%,{user_str}"
+            ),
+        )
+        return [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
 @main_bot.message_handler(func=lambda msg: msg.text == "Быть в курсе, если освободится время")
 def subscribe_to_free_slots(message):
     chat_id = message.chat.id
@@ -779,9 +813,16 @@ def handle_subscribe_day_selection(message):
     if not date_iso:
         main_bot.send_message(chat_id, "Пожалуйста, выберите дату из списка.")
         return
-    times = get_busy_times_for_day(date_iso)
-    if not times:
+    times_all = get_busy_times_for_day(date_iso)
+    if not times_all:
         main_bot.send_message(chat_id, "В этот день нет занятых слотов с 11:00 до 23:00.")
+        subscribe_to_free_slots(message)
+        return
+    times_already = _get_already_subscribed_times(chat_id, date_iso)
+    already_set = set(times_already)
+    times = [t for t in times_all if t not in already_set]
+    if not times:
+        main_bot.send_message(chat_id, "Вы уже подписаны на все занятые слоты этого дня в интервале 11:00–23:00.")
         subscribe_to_free_slots(message)
         return
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -824,9 +865,11 @@ def handle_subscribe_time_selection(message):
         subscribe_to_free_slots(message)
         return
     if not re.match(r"^\d{2}:\d{2}$", text):
-        times = get_busy_times_for_day(date_iso)
+        times_all = get_busy_times_for_day(date_iso)
+        times_already = _get_already_subscribed_times(chat_id, date_iso)
+        times = [t for t in times_all if t not in set(times_already)]
         if not times:
-            main_bot.send_message(chat_id, "В этот день нет занятых слотов.")
+            main_bot.send_message(chat_id, "Нет доступных слотов для подписки в этот день.")
             subscribe_to_free_slots(message)
             return
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -847,7 +890,7 @@ def handle_subscribe_time_selection(message):
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT status
+            SELECT status, subscribed_users
             FROM slots
             WHERE date = %s
               AND LEFT(time,5) = %s
@@ -861,10 +904,11 @@ def handle_subscribe_time_selection(message):
     finally:
         conn.close()
     if not row:
-        main_bot.send_message(chat_id, "Слот не найден. Выберите время из списка.")
-        times = get_busy_times_for_day(date_iso)
+        times_all = get_busy_times_for_day(date_iso)
+        times_already = _get_already_subscribed_times(chat_id, date_iso)
+        times = [t for t in times_all if t not in set(times_already)]
         if not times:
-            main_bot.send_message(chat_id, "В этот день больше нет занятых слотов.")
+            main_bot.send_message(chat_id, "В этот день больше нет доступных слотов для подписки.")
             subscribe_to_free_slots(message)
             return
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -880,14 +924,47 @@ def handle_subscribe_time_selection(message):
         kb.add(types.KeyboardButton("На главную"))
         main_bot.send_message(chat_id, f"Выберите время ({format_date(date_iso)}):", reply_markup=kb)
         return
-    status_val = int(row[0] or 0)
+    status_val = int((row[0] or 0))
     if status_val == 0:
         main_bot.send_message(chat_id, "Этот слот уже свободен. Выберите другой занятый слот.")
-        times = get_busy_times_for_day(date_iso)
+        times_all = get_busy_times_for_day(date_iso)
+        times_already = _get_already_subscribed_times(chat_id, date_iso)
+        times = [t for t in times_all if t not in set(times_already)]
         if not times:
-            main_bot.send_message(chat_id, "В этот день больше нет занятых слотов.")
+            main_bot.send_message(chat_id, "В этот день больше нет доступных слотов для подписки.")
             subscribe_to_free_slots(message)
             return
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        row_btn = []
+        for i, t in enumerate(times, start=1):
+            row_btn.append(types.KeyboardButton(t))
+            if i % 3 == 0:
+                kb.add(*row_btn)
+                row_btn = []
+        if row_btn:
+            kb.add(*row_btn)
+        kb.add(types.KeyboardButton("Другой день"))
+        kb.add(types.KeyboardButton("На главную"))
+        main_bot.send_message(chat_id, f"Выберите время ({format_date(date_iso)}):", reply_markup=kb)
+        return
+    subs_str = str(row[1] or "")
+    uid_str = str(chat_id)
+    already = (
+        subs_str == uid_str
+        or subs_str.startswith(uid_str + ",")
+        or subs_str.endswith("," + uid_str)
+        or ("," + uid_str + ",") in subs_str
+    )
+    if already:
+        main_bot.send_message(chat_id, "Подписка на этот слот уже оформлена. Выберите другой занятый слот.")
+        times_all = get_busy_times_for_day(date_iso)
+        times_already = _get_already_subscribed_times(chat_id, date_iso)
+        times = [t for t in times_all if t not in set(times_already)]
+        if not times:
+            main_bot.send_message(chat_id, "Нет доступных слотов для подписки в этот день.")
+            subscribe_to_free_slots(message)
+            return
+
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
         row_btn = []
         for i, t in enumerate(times, start=1):
