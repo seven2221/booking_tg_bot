@@ -14,10 +14,8 @@ def send_booking_selection_keyboard(chat_id, bookings, bot):
         group_name = group.get('group_name', 'Без названия')
         btn_text = f"{start_time}–{end_time}, {group_name}"
         markup.add(types.KeyboardButton(btn_text))
-
     markup.row(types.KeyboardButton("Выбрать другой день"))
     markup.row(types.KeyboardButton("На главную"))
-
     bot.send_message(chat_id, "Выберите бронь для отмены:", reply_markup=markup)
 
 
@@ -67,7 +65,6 @@ def _group_booking_ids(rows):
         except ValueError:
             continue
         bookings.append({'id': bid})
-
     grouped = []
     current_group = None
     for booking in bookings:
@@ -75,10 +72,8 @@ def _group_booking_ids(rows):
             current_group = {'ids': [booking['id']]}
         else:
             current_group['ids'].append(booking['id'])
-
     if current_group:
         grouped.append(current_group)
-
     return grouped
 
 

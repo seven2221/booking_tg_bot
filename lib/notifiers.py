@@ -11,7 +11,6 @@ def _get_pool():
         return _MYSQL_POOL
     except NameError:
         pass
-
     config = {
         "host": os.getenv("MYSQL_HOST", "localhost"),
         "database": os.getenv("MYSQL_DATABASE"),
@@ -21,11 +20,9 @@ def _get_pool():
         "charset": "utf8mb4",
         "use_pure": True,
     }
-
     missing = [k for k in ("database", "user", "password") if not config.get(k)]
     if missing:
         raise RuntimeError(f"Missing DB config keys in env: {missing}")
-
     _MYSQL_POOL = pooling.MySQLConnectionPool(
         pool_name="notify_pool",
         pool_size=5,
@@ -38,7 +35,6 @@ def _get_pool():
 def _fetch_slots_by_ids(ids):
     if not ids:
         return []
-
     pool = _get_pool()
     cnx = pool.get_connection()
     try:
@@ -58,36 +54,71 @@ def _fetch_slots_by_ids(ids):
 
 def notify_subscribers_for_cancellation(group, bot):
     from datetime import datetime as _dt
+    from lib.db_init import get_connection
     ids = group.get("ids") or []
-    results = _fetch_slots_by_ids(ids)
+    if not ids:
+        return
+    conn = get_connection()
+    try:
+        placeholders = ", ".join(["%s"] * len(ids))
+        query = f"""
+            SELECT date, time, subscribed_users
+            FROM slots
+            WHERE id IN ({placeholders})
+        """
+        with conn.cursor() as cur:
+            cur.execute(query, tuple(ids))
+            results = cur.fetchall()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if not results:
+        return
     dates = set()
+    users_to_notify = {}
     for row in results:
         dt_val = row[0]
+        time_val = row[1]
+        subs_str = row[2]
+        date_iso = None
         if isinstance(dt_val, _dt):
-            dates.add(dt_val.date().isoformat())
+            date_iso = dt_val.date().isoformat()
         elif hasattr(dt_val, "isoformat"):
-            dates.add(dt_val.isoformat())
+            try:
+                date_iso = dt_val.isoformat()
+            except Exception:
+                date_iso = str(dt_val)
         else:
-            dates.add(str(dt_val))
-    selected_date = list(dates) if dates else "неизвестная дата"
-    users_to_notify = {}
-    for _, time_val, subs_str in results:
+            date_iso = str(dt_val)
+        if date_iso:
+            dates.add(date_iso)
         if not subs_str:
             continue
-        for user_id in str(subs_str).split(","):
-            user_id = user_id.strip()
-            if not user_id:
+        time_text = str(time_val)
+        for uid_raw in str(subs_str).split(","):
+            uid_raw = (uid_raw or "").strip()
+            if not uid_raw:
                 continue
-            users_to_notify.setdefault(user_id, []).append(str(time_val))
-    formatted_date = selected_date
-    try:
-        formatted_date = _dt.strptime(str(selected_date), "%Y-%m-%d").strftime("%d.%м.%Y")
-    except Exception:
-        pass
+            try:
+                uid_int = int(uid_raw)
+            except Exception:
+                continue
+            users_to_notify.setdefault(uid_int, []).append(time_text)
+    if dates:
+        try:
+            date_list = sorted(dates)
+            base = date_list[0]
+            formatted_date = _dt.strptime(base, "%Y-%m-%d").strftime("%d.%m.%Y")
+        except Exception:
+            formatted_date = ", ".join(date_list)
+    else:
+        formatted_date = "неизвестная дата"
     for user_id, times in users_to_notify.items():
         try:
             uniq_times_sorted = sorted(set(times))
-            message = f"🔔 У нас освободилось время!\n{formatted_date}:\n" + "\n".join(uniq_times_sorted)
+            message = "🔔 У нас освободилось время!\n" + f"{formatted_date}:\n" + "\n".join(uniq_times_sorted)
             bot.send_message(int(user_id), message)
         except Exception as e:
             print(e)

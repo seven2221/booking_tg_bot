@@ -129,7 +129,6 @@ def get_free_days():
         today = datetime.now().date()
         now_time = datetime.now()
         date_list = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(28)]
-
         free_days = []
         for date_str in date_list:
             is_today = date_str == today.strftime("%Y-%m-%d")
@@ -149,7 +148,6 @@ def get_free_days():
             count = int(count or 0)
             if count == 0 or count < 13:
                 free_days.append(date_str)
-
         return free_days
     finally:
         conn.close()
@@ -167,7 +165,6 @@ def get_daily_schedule_from_db(date: str):
         rows = cur.fetchall()
     finally:
         conn.close()
-
     schedule = []
     for time_str, status, group_name, booking_type, comment in rows:
         st = int(status or 0)
@@ -187,7 +184,6 @@ def prepare_daily_schedule_data(date: str):
     raw_slots = get_daily_schedule_from_db(date)
     grouped_slots = []
     current_group = None
-
     for slot in raw_slots:
         if slot["group_name"]:
             if not current_group:
@@ -218,10 +214,8 @@ def prepare_daily_schedule_data(date: str):
                 grouped_slots.append(current_group)
                 current_group = None
             grouped_slots.append(slot)
-
     if current_group:
         grouped_slots.append(current_group)
-
     final_schedule = []
     for slot in grouped_slots:
         if "time" not in slot:
@@ -233,9 +227,7 @@ def prepare_daily_schedule_data(date: str):
 def _fetch_bookings_for_range(dates_list, where_status="status IN (1, 2)"):
     if not dates_list:
         return []
-
     placeholders = ",".join(["%s"] * len(dates_list))
-
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -248,7 +240,6 @@ def _fetch_bookings_for_range(dates_list, where_status="status IN (1, 2)"):
         rows = cur.fetchall()
     finally:
         conn.close()
-
     bookings = []
     for bid, date_str, time_str, group_name, user_id, booking_type, comment in rows:
         try:
@@ -316,7 +307,6 @@ def get_grouped_daily_bookings(date: str):
     target = datetime.strptime(date, "%Y-%m-%d")
     prev_day = (target - timedelta(days=1)).strftime("%Y-%m-%d")
     next_day = (target + timedelta(days=1)).strftime("%Y-%m-%d")
-
     bookings = _fetch_bookings_for_range([prev_day, date, next_day])
     grouped = _group_contiguous(bookings)
     filtered = [g for g in grouped if g["start_time"].strftime("%Y-%m-%d") == date]
