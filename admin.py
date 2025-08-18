@@ -52,6 +52,8 @@ def show_menu(message):
     reset_user_state(message.chat.id, user_states)
 
 
+### Главное меню ###
+
 @admin_bot.message_handler(commands=["start"])
 def handle_start(message):
     if not is_admin(message.from_user.id):
@@ -60,6 +62,8 @@ def handle_start(message):
     admin_bot.set_my_commands([types.BotCommand("/start", "Главное меню")])
     show_menu(message)
 
+
+### Расписание ###
 
 @admin_bot.message_handler(func=lambda msg: msg.text == "Посмотреть расписание")
 def view_schedule(message):
@@ -236,7 +240,6 @@ def send_schedule_list(message):
             pass
 
 
-
 def send_schedule_list_notification(chat_id, start_time, end_time, group_data):
     group_name, contact_info, booking_type, comment = group_data
     safe_group = escape_markdown(group_name or "")
@@ -340,212 +343,95 @@ def handle_choose_specific_day(message):
     show_menu(message)
 
 
-@admin_bot.message_handler(func=lambda msg: msg.text == "Просмотреть неподтвержденные брони")
-def show_unconfirmed_bookings(message):
-    if not is_admin(message.from_user.id):
-        admin_bot.send_message(message.chat.id, "❌ Нет прав.")
-        return
+### Неподтвержденные брони ###
+
+def _load_unconfirmed_booking_ids_mysql() -> list[int]:
     conn = get_connection()
     try:
-        cur = conn.cursor()
-        cur.execute("""
+        cursor = conn.cursor()
+        cursor.execute(
+            """
             SELECT DISTINCT booking_id
             FROM slots
             WHERE status = 1 AND booking_id IS NOT NULL
             ORDER BY booking_id
-        """)
-        rows = cur.fetchall()
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-    booking_ids = []
-    for r in rows:
-        v = r[0] if isinstance(r, (list, tuple)) else r
-        if v is None:
-            continue
-        s = str(v).strip()
-        if not s:
-            continue
-        try:
-            booking_ids.append(int(s))
-        except Exception:
-            booking_ids.append(s)
-    if not booking_ids:
-        admin_bot.send_message(message.chat.id, "Нет неподтвержденных броней.")
-        return
-    items = []
-    for bid in booking_ids:
-        try:
-            info = get_booking_info_by_id(bid)
-        except Exception:
-            info = None
-        if not info:
-            continue
-        date_str_human = (info.get("date") or "").strip()
-        start_human = (info.get("start_time") or "").strip()
-        end_human = (info.get("end_time") or "").strip()
-        group_name = (info.get("group_name") or "—").strip()
-        label = f"{date_str_human} {start_human}–{end_human} · {group_name}"
-        items.append({
-            "booking_id": bid,
-            "label": label,
-            "info": info,
-        })
-    if not items:
-        admin_bot.send_message(message.chat.id, "Нет неподтвержденных броней.")
-        return
-    state = {
-        "step": "choose_unconfirmed_booking",
-        "items": items
-    }
-    user_states[message.chat.id] = state
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for it in items:
-        markup.add(types.KeyboardButton(it["label"]))
-    markup.add(types.KeyboardButton("На главную"))
-    admin_bot.send_message(message.chat.id, "Выберите бронь:", reply_markup=markup)
-
-
-@admin_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "choose_unconfirmed_booking")
-def handle_choose_unconfirmed_booking(message):
-    if message.text == "На главную":
-        show_menu(message)
-        return
-    state = user_states.get(message.chat.id, {}) or {}
-    items = state.get("items", [])
-    selected = None
-    incoming = (message.text or "").strip()
-    for it in items:
-        if it["label"] == incoming:
-            selected = it
-            break
-    if not selected:
-        admin_bot.send_message(message.chat.id, "Выберите бронь из списка.")
-        return
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("✅ Подтвердить", "❌ Отклонить")
-    markup.add("На главную")
-    state["selected_booking_id"] = selected["booking_id"]
-    state["selected_label"] = selected["label"]
-    state["step"] = "decide_unconfirmed_booking"
-    user_states[message.chat.id] = state
-    admin_bot.send_message(message.chat.id, f"Выбранная бронь: {selected['label']}", reply_markup=markup)
-
-
-@admin_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "decide_unconfirmed_booking")
-def handle_decide_unconfirmed_booking(message):
-    if message.text == "На главную":
-        show_menu(message)
-        return
-    state = user_states.get(message.chat.id, {}) or {}
-    booking_id = state.get("selected_booking_id")
-    if not booking_id:
-        admin_bot.send_message(message.chat.id, "Сессия устарела. Начните заново.")
-        show_menu(message)
-        return
-    if message.text == "✅ Подтвердить":
-        try:
-            confirm_booking(booking_id)
-            admin_bot.send_message(message.chat.id, "Бронь подтверждена ✅")
-        except Exception as e:
-            admin_bot.send_message(message.chat.id, f"Ошибка подтверждения: {e}")
-            return
-    elif message.text == "❌ Отклонить":
-        try:
-            reject_booking(booking_id)
-            admin_bot.send_message(message.chat.id, "Бронь отклонена ❌")
-        except Exception as e:
-            admin_bot.send_message(message.chat.id, f"Ошибка отклонения: {e}")
-            return
-    else:
-        admin_bot.send_message(message.chat.id, "Выберите действие из списка.")
-        return
-    show_menu(message)
-
-
-@admin_bot.message_handler(func=lambda msg: msg.text == "Отменить бронь")
-def handle_cancel_booking_admin(message):
-    if not is_admin(message.from_user.id):
-        admin_bot.send_message(message.chat.id, "❌ Нет прав.")
-        return
-    today = datetime.now().strftime("%Y-%m-%d")
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT DISTINCT date FROM slots WHERE status IN (1, 2) AND date >= %s ORDER BY date", (today,))
-        dates = [row[0] for row in cur.fetchall()]
+            """
+        )
+        rows = cursor.fetchall()
     finally:
         conn.close()
-    if not dates:
-        admin_bot.send_message(message.chat.id, "Нет активных броней для отмены.")
-        show_menu(message)
-        return
-    state = {"step": "choose_date_for_cancellation_admin", "dates": dates}
-    user_states[message.chat.id] = state
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for d in dates:
-        date_iso = d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)
-        markup.add(types.KeyboardButton(format_date(date_iso)))
-    markup.add(types.KeyboardButton("На главную"))
-    admin_bot.send_message(message.chat.id, "Выберите дату:", reply_markup=markup)
+    booking_ids: list[int] = []
+    for row in rows:
+        raw_value = row[0] if isinstance(row, (list, tuple)) else row
+        if raw_value is None:
+            continue
+        try:
+            booking_ids.append(int(str(raw_value).strip()))
+        except Exception:
+            continue
+    return booking_ids
 
 
-@admin_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "choose_date_for_cancellation_admin")
-def handle_date_for_cancellation_admin(message):
-    if message.text == "На главную":
-        show_menu(message)
-        return
-    state = user_states.get(message.chat.id, {}) or {}
-    selected_date = None
-    for d in state.get("dates", []):
-        date_iso = d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)
-        if message.text.strip() == format_date(date_iso):
-            selected_date = date_iso
-            break
-    if not selected_date:
-        admin_bot.send_message(message.chat.id, "Выберите дату из списка.")
-        return
-    bookings = get_grouped_bookings_for_cancellation(selected_date)
-    if not bookings:
-        admin_bot.send_message(message.chat.id, "Нет броней для отмены в этот день.")
-        show_menu(message)
-        return
-    state["step"] = "choose_booking_to_cancel_admin"
-    state["bookings"] = bookings
-    user_states[message.chat.id] = state
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for b in bookings:
-        start_time = b["start_time"].strftime("%H:%M")
-        end_time = b["end_time"].strftime("%H:%M")
-        markup.add(types.KeyboardButton(f"{start_time}–{end_time}, {b['group_name']}"))
-    markup.add(types.KeyboardButton("На главную"))
-    admin_bot.send_message(message.chat.id, "Выберите бронь:", reply_markup=markup)
+def _format_unconfirmed_booking_note(booking_info: dict) -> str:
+    selected_day_iso_for_human = booking_info.get("date") or ""
+    start_time_human = booking_info.get("start_time") or ""
+    end_time_human = booking_info.get("end_time") or ""
+    group_name = escape_markdown(booking_info.get("group_name") or "")
+    booking_type = escape_markdown(booking_info.get("booking_type") or "")
+    comment = escape_markdown(booking_info.get("comment") or "—")
+    contact_info = escape_markdown(booking_info.get("contact_info") or "—")
+    note = (
+        f"Дата: {selected_day_iso_for_human}\n"
+        f"Время: {start_time_human}–{end_time_human}\n"
+        f"Группа: {group_name}\n"
+        f"Тип: {booking_type}\n"
+        f"Комментарий: {comment}\n"
+        f"Контакт: {contact_info}"
+    )
+    return note
 
 
-@admin_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "choose_booking_to_cancel_admin")
-def handle_choose_booking_to_cancel_admin(message):
-    if message.text == "На главную":
+@admin_bot.message_handler(func=lambda message: message.text == "Просмотреть неподтвержденные брони")
+def handle_view_unconfirmed(message):
+    admin_id = message.from_user.id
+    if not is_admin(admin_id):
+        admin_bot.send_message(message.chat.id, "❌ У вас нет прав для выполнения этой операции.")
+        return
+    try:
+        booking_ids = _load_unconfirmed_booking_ids_mysql()
+    except Exception as error:
+        logger.error("Ошибка загрузки неподтвержденных броней: %s", error)
+        admin_bot.send_message(message.chat.id, "Произошла ошибка при загрузке неподтвержденных броней.")
         show_menu(message)
         return
-    state = user_states.get(message.chat.id, {}) or {}
-    bookings = state.get("bookings", [])
-    selected = None
-    for b in bookings:
-        start_time = b["start_time"].strftime("%H:%M")
-        end_time = b["end_time"].strftime("%H:%M")
-        if message.text.strip() == f"{start_time}–{end_time}, {b['group_name']}":
-            selected = b
-            break
-    if not selected:
-        admin_bot.send_message(message.chat.id, "Выберите бронь из списка.")
+    if not booking_ids:
+        admin_bot.send_message(message.chat.id, "Нет неподтвержденных броней.")
+        show_menu(message)
         return
-    booking_ids = selected.get("ids", [])
-    reject_booking(booking_ids)
-    admin_bot.send_message(message.chat.id, "Бронь отменена ✅")
+    for booking_id in booking_ids:
+        try:
+            booking_info = get_booking_info_by_id(booking_id)
+        except Exception as error:
+            logger.error("Не удалось получить информацию о брони %s: %s", booking_id, error)
+            continue
+
+        if not booking_info:
+            continue
+        try:
+            note_text = _format_unconfirmed_booking_note(booking_info)
+
+            markup = types.InlineKeyboardMarkup()
+            confirm_btn = types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{booking_id}")
+            reject_btn = types.InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{booking_id}")
+            markup.add(confirm_btn, reject_btn)
+            admin_bot.send_message(message.chat.id, note_text, reply_markup=markup, parse_mode="Markdown")
+        except Exception as error:
+            logger.error("Не удалось отправить сообщение по брони %s: %s", booking_id, error)
+            continue
     show_menu(message)
 
+
+### inline-хендлеры ###
 
 @admin_bot.callback_query_handler(func=lambda callback: callback.data.startswith("confirm:"))
 def handle_confirm_booking(callback):
@@ -641,6 +527,7 @@ def cb_cancel_by_booking_id(c):
             logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
     admin_bot.answer_callback_query(c.id, "Отменено")
     admin_bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
+
 
 def main():
     admin_bot.polling(none_stop=True)
