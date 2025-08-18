@@ -119,16 +119,24 @@ def create_schedule_grid_image(requester_id=None, days_to_show=28):
                     time_str, status_prefetched, group_prefetched = schedule_by_date[date_value][slot_index]
                 except IndexError:
                     time_str, status_prefetched, group_prefetched = "", 0, ""
-                if status_prefetched > 0 and is_admin_mode:
-                    live_status = _load_slot_status(date_value, time_str) if time_str else 0
-                    if live_status == 2:
+                status_effective = status_prefetched
+                if time_str:
+                    if is_admin_mode:
+                        status_effective, _ = _load_slot_status_and_group(date_value, time_str)
+                    else:
+                        status_effective = _load_slot_status(date_value, time_str)
+                if is_admin_mode:
+                    if status_effective == 2:
                         background_color = (255, 180, 180)
-                    elif live_status == 1:
+                    elif status_effective == 1:
                         background_color = (255, 200, 150)
                     else:
-                        background_color = (255, 200, 200)
+                        background_color = (200, 255, 200)
                 else:
-                    background_color = (200, 255, 200)
+                    if status_effective and status_effective > 0:
+                        background_color = (255, 180, 180)
+                    else:
+                        background_color = (200, 255, 200)
                 draw.rectangle([x, y, x + cell_width, y + cell_height], fill=background_color, outline="black")
                 if time_str:
                     time_y = y + (cell_height - 26) // 2

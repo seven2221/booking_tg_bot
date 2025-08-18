@@ -947,6 +947,7 @@ def show_price_list(message):
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Посмотреть расписание")
 def view_schedule(message):
+    main_bot.send_message(message.chat.id, "Рисуем...")
     path = None
     try:
         path = create_schedule_grid_image(message.chat.id)
