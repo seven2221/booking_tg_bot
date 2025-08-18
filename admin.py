@@ -345,23 +345,66 @@ def show_unconfirmed_bookings(message):
     if not is_admin(message.from_user.id):
         admin_bot.send_message(message.chat.id, "❌ Нет прав.")
         return
-
-    groups = get_grouped_unconfirmed_bookings()
-    if not groups:
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT booking_id
+            FROM slots
+            WHERE status = 1 AND booking_id IS NOT NULL
+            ORDER BY booking_id
+        """)
+        rows = cur.fetchall()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    booking_ids = []
+    for r in rows:
+        v = r[0] if isinstance(r, (list, tuple)) else r
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+        try:
+            booking_ids.append(int(s))
+        except Exception:
+            booking_ids.append(s)
+    if not booking_ids:
         admin_bot.send_message(message.chat.id, "Нет неподтвержденных броней.")
         return
-
-    state = {"step": "choose_unconfirmed_booking", "groups": groups}
+    items = []
+    for bid in booking_ids:
+        try:
+            info = get_booking_info_by_id(bid)
+        except Exception:
+            info = None
+        if not info:
+            continue
+        date_str_human = (info.get("date") or "").strip()
+        start_human = (info.get("start_time") or "").strip()
+        end_human = (info.get("end_time") or "").strip()
+        group_name = (info.get("group_name") or "—").strip()
+        label = f"{date_str_human} {start_human}–{end_human} · {group_name}"
+        items.append({
+            "booking_id": bid,
+            "label": label,
+            "info": info,
+        })
+    if not items:
+        admin_bot.send_message(message.chat.id, "Нет неподтвержденных броней.")
+        return
+    state = {
+        "step": "choose_unconfirmed_booking",
+        "items": items
+    }
     user_states[message.chat.id] = state
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for g in groups:
-        start_time = g["start_time"].strftime("%H:%M")
-        end_time = g["end_time"].strftime("%H:%M")
-        date_iso = g["date_str"].strftime("%Y-%m-%d") if hasattr(g["date_str"], "strftime") else str(g["date_str"])
-        label = f"{format_date(date_iso)} {start_time}–{end_time} · {g['group_name']}"
-        markup.add(types.KeyboardButton(label))
+    for it in items:
+        markup.add(types.KeyboardButton(it["label"]))
     markup.add(types.KeyboardButton("На главную"))
-
     admin_bot.send_message(message.chat.id, "Выберите бронь:", reply_markup=markup)
 
 
@@ -371,27 +414,24 @@ def handle_choose_unconfirmed_booking(message):
         show_menu(message)
         return
     state = user_states.get(message.chat.id, {}) or {}
-    groups = state.get("groups", [])
+    items = state.get("items", [])
     selected = None
-    for g in groups:
-        start_time = g["start_time"].strftime("%H:%M")
-        end_time = g["end_time"].strftime("%H:%M")
-        date_iso = g["date_str"].strftime("%Y-%m-%d") if hasattr(g["date_str"], "strftime") else str(g["date_str"])
-        label = f"{format_date(date_iso)} {start_time}–{end_time} · {g['group_name']}"
-        if message.text.strip() == label:
-            selected = g
+    incoming = (message.text or "").strip()
+    for it in items:
+        if it["label"] == incoming:
+            selected = it
             break
     if not selected:
         admin_bot.send_message(message.chat.id, "Выберите бронь из списка.")
         return
-    booking_ids = selected.get("ids", [])
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("✅ Подтвердить", "❌ Отклонить")
     markup.add("На главную")
-    state["selected"] = selected
+    state["selected_booking_id"] = selected["booking_id"]
+    state["selected_label"] = selected["label"]
     state["step"] = "decide_unconfirmed_booking"
     user_states[message.chat.id] = state
-    admin_bot.send_message(message.chat.id, f"Выбранная бронь: {label}", reply_markup=markup)
+    admin_bot.send_message(message.chat.id, f"Выбранная бронь: {selected['label']}", reply_markup=markup)
 
 
 @admin_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "decide_unconfirmed_booking")
@@ -400,15 +440,25 @@ def handle_decide_unconfirmed_booking(message):
         show_menu(message)
         return
     state = user_states.get(message.chat.id, {}) or {}
-    selected = state.get("selected")
-    booking_ids = selected.get("ids", [])
+    booking_id = state.get("selected_booking_id")
+    if not booking_id:
+        admin_bot.send_message(message.chat.id, "Сессия устарела. Начните заново.")
+        show_menu(message)
+        return
     if message.text == "✅ Подтвердить":
-        confirm_booking(booking_ids)
-        admin_bot.send_message(message.chat.id, "Бронь подтверждена ✅")
+        try:
+            confirm_booking(booking_id)
+            admin_bot.send_message(message.chat.id, "Бронь подтверждена ✅")
+        except Exception as e:
+            admin_bot.send_message(message.chat.id, f"Ошибка подтверждения: {e}")
+            return
     elif message.text == "❌ Отклонить":
-        reject_booking(booking_ids)
-        reject_booking(booking_ids)
-        admin_bot.send_message(message.chat.id, "Бронь отклонена ❌")
+        try:
+            reject_booking(booking_id)
+            admin_bot.send_message(message.chat.id, "Бронь отклонена ❌")
+        except Exception as e:
+            admin_bot.send_message(message.chat.id, f"Ошибка отклонения: {e}")
+            return
     else:
         admin_bot.send_message(message.chat.id, "Выберите действие из списка.")
         return
