@@ -9,12 +9,14 @@ from telebot import types
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 from lib.db_init import get_connection, init_db
 from lib.schedule_generator import create_schedule_grid_image
+from lib.keyboards import create_confirmation_keyboard
 from lib.schedule_tasks import (
     add_subscriber_to_slot,
     get_booked_days_filtered,
     get_free_days,
     get_grouped_bookings_for_cancellation,
     get_schedule_for_day,
+    get_busy_times_for_day,
 )
 from lib.utils import (
     book_slots,
@@ -196,7 +198,7 @@ def handle_choose_other_day(message):
     show_free_days(message)
 
 
-@main_bot.message_handler(func=lambda m: re.match(r"^\d{2}:00$", m.text))
+@main_bot.message_handler(func=lambda m: re.match(r"^\d{2}:00$", m.text) and user_states.get(m.chat.id, {}).get("step") == "waiting_for_time")
 def handle_time_selection(message):
     chat_id = message.chat.id
     if user_states.get(chat_id, {}).get("step") != "waiting_for_time":
@@ -373,11 +375,7 @@ def handle_comment_input(message):
         f"Контакт: {safe_contact}\n"
         f"Создатель: {mention_safe}"
     )
-    inline_kb = types.InlineKeyboardMarkup()
-    inline_kb.add(
-        types.InlineKeyboardButton("Подтвердить", callback_data=f"confirm:{booking_id}"),
-        types.InlineKeyboardButton("Отклонить", callback_data=f"reject:{booking_id}"),
-    )
+    inline_kb = create_confirmation_keyboard(selected_day, selected_time, booking_id)
     for admin_id in ADMIN_IDS:
         try:
             admin_bot.send_message(admin_id, note, reply_markup=inline_kb, parse_mode="Markdown")
@@ -741,127 +739,194 @@ def handle_user_choose_booking_for_cancellation(message):
 
 @main_bot.message_handler(func=lambda msg: msg.text == "Быть в курсе, если освободится время")
 def subscribe_to_free_slots(message):
-    reset_user_state(message.chat.id, user_states)
-    booked_days = get_booked_days_filtered()
-    if not booked_days:
-        main_bot.send_message(message.chat.id, "Нет забронированных дней.")
+    chat_id = message.chat.id
+    reset_user_state(chat_id, user_states)
+    days = get_booked_days_filtered()
+    if not days:
+        main_bot.send_message(chat_id, "Нет занятых дней в ближайшее время.")
         return
-    iso_days = [(d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)) for d in booked_days]
-    iso_map = {}
-    for iso in iso_days:
-        iso_map[format_date(iso)] = iso
-    state = user_states.get(message.chat.id, {})
-    if not isinstance(state, dict):
-        state = {}
-    state["date_btn_map_subscribe"] = iso_map
-    state["step"] = "waiting_for_subscribe_day"
-    user_states[message.chat.id] = state
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for label in iso_map.keys():
-        keyboard.add(types.KeyboardButton(label))
-    keyboard.add(types.KeyboardButton("На главную"))
-    main_bot.send_message(message.chat.id, "Выберите день:", reply_markup=keyboard)
+    iso_days = [(d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)) for d in days]
+    btn_map = {format_date(d): d for d in iso_days}
+    user_states[chat_id] = {
+        "step": "waiting_for_subscribe_day",
+        "date_btn_map": btn_map,
+    }
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    labels = list(btn_map.keys())
+    row = []
+    for i, lbl in enumerate(labels, start=1):
+        row.append(types.KeyboardButton(lbl))
+        if i % 3 == 0:
+            kb.add(*row)
+            row = []
+    if row:
+        kb.add(*row)
+    kb.add(types.KeyboardButton("На главную"))
+    main_bot.send_message(chat_id, "Выберите день:", reply_markup=kb)
 
 
-@main_bot.message_handler(
-    func=lambda msg: isinstance(user_states.get(msg.chat.id), dict)
-    and user_states[msg.chat.id].get("step") == "waiting_for_subscribe_day"
-)
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "waiting_for_subscribe_day")
 def handle_subscribe_day_selection(message):
-    if message.text == "На главную":
-        return_to_main_menu(message)
+    chat_id = message.chat.id
+    text = (message.text or "").strip()
+    if text == "На главную":
+        reset_user_state(chat_id, user_states)
+        show_menu(message)
         return
-    state = user_states.get(message.chat.id, {}) or {}
-    btn_map = state.get("date_btn_map_subscribe") or state.get("date_btn_map") or {}
-    selected_day = btn_map.get(message.text.strip())
-    if not selected_day:
-        main_bot.send_message(message.chat.id, "Выберите дату из списка.")
+    state = user_states.get(chat_id, {}) or {}
+    btn_map = state.get("date_btn_map") or {}
+    date_iso = btn_map.get(text)
+    if not date_iso:
+        main_bot.send_message(chat_id, "Пожалуйста, выберите дату из списка.")
+        return
+    times = get_busy_times_for_day(date_iso)
+    if not times:
+        main_bot.send_message(chat_id, "В этот день нет занятых слотов с 11:00 до 23:00.")
         subscribe_to_free_slots(message)
         return
-    chat_id = message.chat.id
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        cur.execute(
-            "SELECT time, subscribed_users "
-            "FROM slots "
-            "WHERE date = %s AND status IN (1, 2) AND date >= %s",
-            (selected_day, current_date),
-        )
-        rows = cur.fetchall()
-    finally:
-        conn.close()
-    if not rows:
-        main_bot.send_message(message.chat.id, "В этот день нет подходящих слотов.")
-        return
-    available_times = []
-    for time_str, subs in rows:
-        subs_list = subs.split(",") if subs else []
-        if str(chat_id) not in subs_list:
-            available_times.append(time_str)
-    if not available_times:
-        main_bot.send_message(
-            message.chat.id, "Вы уже подписаны на все доступные слоты этого дня."
-        )
-        return
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
-    keyboard.add(*[types.KeyboardButton(t) for t in available_times])
-    keyboard.add(types.KeyboardButton("Выбрать другой день"))
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    row = []
+    for i, t in enumerate(times, start=1):
+        row.append(types.KeyboardButton(t))
+        if i % 3 == 0:
+            kb.add(*row)
+            row = []
+    if row:
+        kb.add(*row)
+    kb.add(types.KeyboardButton("Другой день"))
+    kb.add(types.KeyboardButton("На главную"))
+    user_states[chat_id] = {
+        "step": "waiting_for_subscribe_time",
+        "subscribe_day": date_iso,
+    }
     main_bot.send_message(
-        message.chat.id,
-        "Выберите время, на которое хотите подписаться:",
-        reply_markup=keyboard,
+        chat_id,
+        f"Выбран день: {format_date(date_iso)}\nВыберите занятый слот (11:00–23:00):",
+        reply_markup=kb,
     )
-    state["step"] = "waiting_for_subscribe_time"
-    state["subscribe_day"] = selected_day
-    user_states[message.chat.id] = state
 
 
-@main_bot.message_handler(
-    func=lambda msg: isinstance(user_states.get(msg.chat.id), dict)
-    and user_states[msg.chat.id].get("step") == "waiting_for_subscribe_time"
-)
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "waiting_for_subscribe_time")
 def handle_subscribe_time_selection(message):
     chat_id = message.chat.id
+    text = (message.text or "").strip()
     state = user_states.get(chat_id, {}) or {}
-    selected_day = state.get("subscribe_day")
-    if message.text == "Выбрать другой день":
-        state["step"] = "waiting_for_subscribe_day"
-        user_states[chat_id] = state
+    date_iso = state.get("subscribe_day")
+    if text == "Другой день":
         subscribe_to_free_slots(message)
         return
-    if message.text == "На главную":
-        return_to_main_menu(message)
+    if text == "На главную":
+        reset_user_state(chat_id, user_states)
+        show_menu(message)
         return
-    selected_time = message.text.strip()
+    if not date_iso:
+        main_bot.send_message(chat_id, "Сессия устарела. Выберите день заново.")
+        subscribe_to_free_slots(message)
+        return
+    if not re.match(r"^\d{2}:\d{2}$", text):
+        times = get_busy_times_for_day(date_iso)
+        if not times:
+            main_bot.send_message(chat_id, "В этот день нет занятых слотов.")
+            subscribe_to_free_slots(message)
+            return
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        row = []
+        for i, t in enumerate(times, start=1):
+            row.append(types.KeyboardButton(t))
+            if i % 3 == 0:
+                kb.add(*row)
+                row = []
+        if row:
+            kb.add(*row)
+        kb.add(types.KeyboardButton("Другой день"))
+        kb.add(types.KeyboardButton("На главную"))
+        main_bot.send_message(chat_id, "Пожалуйста, выберите время из списка (формат HH:MM).", reply_markup=kb)
+        return
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT status FROM slots WHERE date = %s AND time = %s",
-            (selected_day, selected_time),
+            """
+            SELECT status
+            FROM slots
+            WHERE date = %s
+              AND LEFT(time,5) = %s
+              AND LEFT(time,5) >= '11:00'
+              AND LEFT(time,5) <= '23:00'
+            LIMIT 1
+            """,
+            (date_iso, text),
         )
         row = cur.fetchone()
-        status = row[0] if row else None
     finally:
         conn.close()
-    if status not in (1, 2):
-        main_bot.send_message(chat_id, "Это время недоступно.")
+    if not row:
+        main_bot.send_message(chat_id, "Слот не найден. Выберите время из списка.")
+        times = get_busy_times_for_day(date_iso)
+        if not times:
+            main_bot.send_message(chat_id, "В этот день больше нет занятых слотов.")
+            subscribe_to_free_slots(message)
+            return
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        row_btn = []
+        for i, t in enumerate(times, start=1):
+            row_btn.append(types.KeyboardButton(t))
+            if i % 3 == 0:
+                kb.add(*row_btn)
+                row_btn = []
+        if row_btn:
+            kb.add(*row_btn)
+        kb.add(types.KeyboardButton("Другой день"))
+        kb.add(types.KeyboardButton("На главную"))
+        main_bot.send_message(chat_id, f"Выберите время ({format_date(date_iso)}):", reply_markup=kb)
         return
-    add_subscriber_to_slot(selected_day, selected_time, chat_id)
-    main_bot.send_message(
-        chat_id, "Спасибо! Мы оповестим вас, если это время освободится."
-    )
+    status_val = int(row[0] or 0)
+    if status_val == 0:
+        main_bot.send_message(chat_id, "Этот слот уже свободен. Выберите другой занятый слот.")
+        times = get_busy_times_for_day(date_iso)
+        if not times:
+            main_bot.send_message(chat_id, "В этот день больше нет занятых слотов.")
+            subscribe_to_free_slots(message)
+            return
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        row_btn = []
+        for i, t in enumerate(times, start=1):
+            row_btn.append(types.KeyboardButton(t))
+            if i % 3 == 0:
+                kb.add(*row_btn)
+                row_btn = []
+        if row_btn:
+            kb.add(*row_btn)
+        kb.add(types.KeyboardButton("Другой день"))
+        kb.add(types.KeyboardButton("На главную"))
+        main_bot.send_message(chat_id, f"Выберите время ({format_date(date_iso)}):", reply_markup=kb)
+        return
+    add_subscriber_to_slot(date_iso, text, chat_id)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add(types.KeyboardButton("Оповестить про другой слот"))
+    kb.add(types.KeyboardButton("На главную"))
+    main_bot.send_message(chat_id, "Готово! Сообщим, если это время освободится.", reply_markup=kb)
+    user_states[chat_id] = {
+        "step": "waiting_for_subscribe_post_action",
+        "subscribe_day": date_iso,
+    }
 
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    keyboard.row(
-        types.KeyboardButton("Оповестить про другое время"),
-        types.KeyboardButton("Вернуться на главную"),
-    )
-    main_bot.send_message(chat_id, "Продолжить?", reply_markup=keyboard)
-    state.clear()
-    user_states[chat_id] = state
+
+@main_bot.message_handler(func=lambda msg: user_states.get(msg.chat.id, {}).get("step") == "waiting_for_subscribe_post_action")
+def handle_subscribe_post_action(message):
+    chat_id = message.chat.id
+    text = (message.text or "").strip()
+    if text in ("Оповестить про другой слот", "Другой день"):
+        subscribe_to_free_slots(message)
+        return
+    if text == "На главную":
+        reset_user_state(chat_id, user_states)
+        show_menu(message)
+        return
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add(types.KeyboardButton("Оповестить про другой слот"))
+    kb.add(types.KeyboardButton("На главную"))
+    main_bot.send_message(chat_id, "Пожалуйста, выберите действие:", reply_markup=kb)
 
 
 ### Прайс ###

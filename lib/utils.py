@@ -68,27 +68,6 @@ def confirm_booking(booking_id: int):
         conn.close()
 
 
-# def reject_booking(booking_id: int):
-#     conn = get_connection()
-#     try:
-#         cur = conn.cursor()
-#         cur.execute("""
-#             UPDATE slots
-#             SET status = 0,
-#                 user_id = NULL,
-#                 group_name = NULL,
-#                 booking_type = NULL,
-#                 comment = NULL,
-#                 contact_info = NULL,
-#                 booking_id = NULL,
-#                 mention = NULL
-#             WHERE booking_id = %s
-#         """, (booking_id,))
-#         conn.commit()
-#     finally:
-#         conn.close()
-
-
 def format_booking_info(group):
     start_time = group["start_time"].strftime("%H:%M") if hasattr(group["start_time"], "strftime") else str(group["start_time"])
     end_time = group["end_time"].strftime("%H:%M") if hasattr(group["end_time"], "strftime") else str(group["end_time"])

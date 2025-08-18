@@ -20,26 +20,65 @@ def get_booked_days_filtered():
         conn.close()
 
 
-def add_subscriber_to_slot(date: str, time: str, user_id: int):
+def get_busy_times_for_day(date_iso: str) -> list[str]:
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT subscribed_users FROM slots WHERE date = %s AND time = %s",
+            """
+            SELECT LEFT(time,5) AS t
+            FROM slots
+            WHERE date = %s
+              AND status IN (1, 2)
+              AND LEFT(time,5) >= '11:00'
+              AND LEFT(time,5) <= '23:00'
+            ORDER BY t
+            """,
+            (date_iso,),
+        )
+        return [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def add_subscriber_to_slot(date: str, time: str, user_id: int):
+    conn = get_connection()
+    cur = None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT subscribed_users FROM slots WHERE date = %s AND LEFT(time,5) = %s LIMIT 1 FOR UPDATE",
             (date, time),
         )
         row = cur.fetchone()
-        current_subs = set(row[0].split(",") if row and row[0] else [])
-        if str(user_id) not in current_subs:
-            current_subs.add(str(user_id))
-            updated = ",".join(sorted(current_subs))
-            cur.execute(
-                "UPDATE slots SET subscribed_users = %s WHERE date = %s AND time = %s",
-                (updated, date, time),
-            )
-            conn.commit()
+        existing_raw = row[0] if row else ""
+        existing = [s.strip() for s in str(existing_raw or "").split(",") if s and s.strip()]
+        subs = set(existing)
+        before = sorted(subs)
+        subs.add(str(user_id))
+        after = sorted(subs)
+        updated = ",".join(after)
+        cur.execute(
+            "UPDATE slots SET subscribed_users = %s WHERE date = %s AND LEFT(time,5) = %s",
+            (updated, date, time),
+        )
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
-        conn.close()
+        try:
+            if cur is not None:
+                cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def reject_booking(booking_id: int):

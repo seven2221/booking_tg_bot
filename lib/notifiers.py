@@ -57,32 +57,19 @@ def _fetch_slots_by_ids(ids):
 
 
 def notify_subscribers_for_cancellation(group, bot):
+    from datetime import datetime as _dt
     ids = group.get("ids") or []
-    if not ids:
-        print("[Error] Пустой список ID в group['ids'].")
-        return
-
-    try:
-        results = _fetch_slots_by_ids(ids)
-    except Exception as e:
-        print(f"[Error] DB fetch failed: {e}")
-        return
-
-    if not results:
-        print("[Error] Нет данных для указанных ID.")
-        return
+    results = _fetch_slots_by_ids(ids)
     dates = set()
     for row in results:
         dt_val = row[0]
-        if isinstance(dt_val, datetime):
+        if isinstance(dt_val, _dt):
             dates.add(dt_val.date().isoformat())
-        elif hasattr(dt_val, "isoformat"):  # date
+        elif hasattr(dt_val, "isoformat"):
             dates.add(dt_val.isoformat())
         else:
             dates.add(str(dt_val))
-
-    selected_date = list(dates)[0] if dates else "неизвестная дата"
-
+    selected_date = list(dates) if dates else "неизвестная дата"
     users_to_notify = {}
     for _, time_val, subs_str in results:
         if not subs_str:
@@ -92,30 +79,29 @@ def notify_subscribers_for_cancellation(group, bot):
             if not user_id:
                 continue
             users_to_notify.setdefault(user_id, []).append(str(time_val))
-
     formatted_date = selected_date
     try:
-        formatted_date = datetime.strptime(str(selected_date), "%Y-%m-%d").strftime("%d.%m.%Y")
+        formatted_date = _dt.strptime(str(selected_date), "%Y-%m-%d").strftime("%d.%м.%Y")
     except Exception:
         pass
-
     for user_id, times in users_to_notify.items():
         try:
-            time_list = "\n".join(sorted(set(times)))
-            message = f"🔔 У нас освободилось время!\n{formatted_date}:\n{time_list}"
+            uniq_times_sorted = sorted(set(times))
+            message = f"🔔 У нас освободилось время!\n{formatted_date}:\n" + "\n".join(uniq_times_sorted)
             bot.send_message(int(user_id), message)
         except Exception as e:
-            print(f"[Error] Can't notify user {user_id}: {e}")
+            print(e)
 
 
 def notify_booking_cancelled(user_id, bot, group_name=None, start_time=None, end_time=None, date_formatted=None):
     try:
+        from lib.utils import escape_markdown
         safe_group = escape_markdown(group_name or "")
         message = (
             f"❌ К сожалению, мы были вынуждены отменить вашу бронь для группы \n*{safe_group}*\n"
-            f"{date_formatted} с {start_time} по {end_time}\nпо техническим причинам.\n"
+            f"{date_formatted} с {start_time} по {end_time}\nпо техническим причинам.\н"
             f"Приносим свои извинения за доставленные неудобства.\nСвязь с админом: @cyberocalypse"
         )
         bot.send_message(int(user_id), message.strip(), parse_mode="Markdown")
     except Exception as e:
-        print(f"[Error] Не удалось отправить уведомление пользователю {user_id}: {e}")
+        print(e)

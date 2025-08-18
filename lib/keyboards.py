@@ -3,7 +3,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime
 
 from lib.db_init import get_connection
-from lib.utils import get_user_id_from_booking_ids, format_date
+from lib.utils import format_date
 
 
 def send_booking_selection_keyboard(chat_id, bookings, bot):
@@ -22,15 +22,10 @@ def send_booking_selection_keyboard(chat_id, bookings, bot):
 
 
 def send_date_selection_keyboard(chat_id, dates, bot):
-    """
-    dates: iterable[str|date|datetime] — значения дат (YYYY-MM-DD) либо объекты дат
-    """
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     buttons = [types.KeyboardButton(format_date(d)) for d in dates]
-
     for i in range(0, len(buttons), 3):
         markup.row(*buttons[i:i+3])
-
     markup.row(types.KeyboardButton("На главную"))
     bot.send_message(chat_id, "Выберите день для отмены брони:", reply_markup=markup)
 
@@ -88,16 +83,18 @@ def _group_booking_ids(rows):
 
 
 def create_confirmation_keyboard(selected_day: str, selected_time: str, booking_ids):
+    if isinstance(booking_ids, (list, tuple)):
+        if not booking_ids:
+            raise ValueError("booking_ids is empty")
+        booking_id = booking_ids
+    else:
+        if booking_ids is None:
+            raise ValueError("booking_id is None")
+        booking_id = booking_ids
     markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton(
-            "✅ Подтвердить", callback_data=f"confirm:{selected_day}:{selected_time}"
-        )
-    )
-    markup.add(
-        InlineKeyboardButton(
-            "❌ Отклонить", callback_data=f"reject:{selected_day}:{selected_time}"
-        )
+        InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{booking_id}"),
+        InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{booking_id}")
     )
     return markup
 

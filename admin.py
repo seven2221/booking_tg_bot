@@ -590,7 +590,7 @@ def cb_cancel_by_booking_id(c):
         except Exception as e:
             logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
     admin_bot.answer_callback_query(c.id, "Отменено")
-
+    admin_bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
 
 def main():
     admin_bot.polling(none_stop=True)
