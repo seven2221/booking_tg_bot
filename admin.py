@@ -431,6 +431,254 @@ def handle_view_unconfirmed(message):
     show_menu(message)
 
 
+### Отмена брони
+
+@admin_bot.message_handler(func=lambda msg: msg.text == "Отменить бронь")
+def handle_cancel_booking(message):
+    admin_id = message.from_user.id
+    if not is_admin(admin_id):
+        admin_bot.send_message(message.chat.id, "❌ У вас нет прав.")
+        return
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT date FROM slots WHERE status = 2 ORDER BY date")
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        admin_bot.send_message(message.chat.id, "Нет доступных дней с подтвержденными бронями.")
+        return
+    iso_dates = [d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d) for (d,) in rows]
+    btn_map = {format_date(d): d for d in iso_dates}
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    labels = list(btn_map.keys())
+    for i in range(0, len(labels), 3):
+        markup.add(*[types.KeyboardButton(lbl) for lbl in labels[i:i+3]])
+    markup.add(types.KeyboardButton("На главную"))
+    user_states[admin_id] = {"step": "choose_cancel_day", "date_btn_map": btn_map}
+    admin_bot.send_message(message.chat.id, "Выберите день:", reply_markup=markup)
+
+
+@admin_bot.message_handler(func=lambda msg: user_states.get(msg.from_user.id, {}).get("step") == "choose_cancel_day")
+def handle_choose_cancel_day(message):
+    admin_id = message.from_user.id
+    text = message.text.strip()
+    if text == "На главную":
+        show_menu(message)
+        return
+    state = user_states.get(admin_id, {})
+    date_iso = state.get("date_btn_map", {}).get(text)
+    if not date_iso:
+        admin_bot.send_message(message.chat.id, "Выберите корректную дату.")
+        return
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT booking_id FROM slots WHERE date = %s AND status = 2", (date_iso,))
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    booking_ids = [int(r[0]) for r in rows if r]
+    if not booking_ids:
+        admin_bot.send_message(message.chat.id, "Нет брони на этот день.")
+        return
+    items = []
+    for bid in booking_ids:
+        info = get_booking_info_by_id(bid)
+        if not info: 
+            continue
+        label = f"{info['start_time']}-{info['end_time']} - {info['group_name']}"
+        items.append((label, bid))
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    row = []
+    for i, (label, _bid) in enumerate(items, start=1):
+        row.append(types.KeyboardButton(label))
+        if i % 3 == 0:
+            markup.add(*row)
+            row = []
+    if row:
+        markup.add(*row)
+    markup.add("На главную")
+
+    state.update({
+        "step": "choose_booking_for_cancel",
+        "bookings": dict(items),
+        "date_iso": date_iso
+    })
+    user_states[admin_id] = state
+    admin_bot.send_message(message.chat.id, "Выберите бронь:", reply_markup=markup)
+
+
+@admin_bot.message_handler(func=lambda msg: user_states.get(msg.from_user.id, {}).get("step") == "choose_booking_for_cancel")
+def handle_choose_booking_for_cancel(message):
+    admin_id = message.from_user.id
+    text = message.text.strip()
+    state = user_states.get(admin_id, {})
+    if text == "На главную":
+        show_menu(message)
+        return
+    bookings = state.get("bookings", {})
+    booking_id = bookings.get(text)
+    if not booking_id:
+        admin_bot.send_message(message.chat.id, "Выберите бронь из списка.")
+        return
+    info = get_booking_info_by_id(booking_id)
+    if not info:
+        admin_bot.send_message(message.chat.id, "Ошибка при получении информации.")
+        return
+    confirm_kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    confirm_kb.add("Да", "Отмена", "Выбрать другую бронь")
+    state.update({
+        "step": "confirm_cancel",
+        "pending_booking_id": booking_id
+    })
+    user_states[admin_id] = state
+    admin_bot.send_message(
+        message.chat.id,
+        f"Вы действительно хотите отменить бронь?\n{info['date']} {info['start_time']}-{info['end_time']} {info['group_name']}",
+        reply_markup=confirm_kb
+    )
+
+
+@admin_bot.message_handler(func=lambda msg: user_states.get(msg.from_user.id, {}).get("step") == "confirm_cancel")
+def handle_confirm_cancel_choice(message):
+    admin_id = message.from_user.id
+    text = (message.text or "").strip()
+    state = user_states.get(admin_id, {}) or {}
+    booking_id = state.get("pending_booking_id")
+    if not booking_id:
+        admin_bot.send_message(message.chat.id, "Сессия устарела. Начните заново.")
+        return show_menu(message)
+    if text == "Отмена":
+        reset_user_state(admin_id, user_states)
+        show_menu(message)
+        return
+    if text == "Выбрать другую бронь":
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT DISTINCT date FROM slots WHERE status = 2 ORDER BY date")
+            rows = cur.fetchall()
+        finally:
+            conn.close()
+        if not rows:
+            reset_user_state(admin_id, user_states)
+            admin_bot.send_message(message.chat.id, "Нет доступных дней с подтвержденными брони.")
+            return show_menu(message)
+        iso_dates = [d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d) for (d,) in rows]
+        btn_map = {format_date(d): d for d in iso_dates}
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+        labels = list(btn_map.keys())
+        for i in range(0, len(labels), 3):
+            markup.add(*[types.KeyboardButton(lbl) for lbl in labels[i:i+3]])
+        markup.add(types.KeyboardButton("На главную"))
+        state = {"step": "choose_cancel_day", "date_btn_map": btn_map}
+        user_states[admin_id] = state
+        admin_bot.send_message(message.chat.id, "Выберите день:", reply_markup=markup)
+        return
+    if text == "Да":
+        state["step"] = "ask_notify_subscribers_for_cancel"
+        user_states[admin_id] = state
+
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        kb.add(types.KeyboardButton("Да"), types.KeyboardButton("Нет"))
+        admin_bot.send_message(message.chat.id, "Уведомить подписавшихся?", reply_markup=kb)
+        return
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    kb.add("Да", "Отмена", "Выбрать другую бронь")
+    admin_bot.send_message(message.chat.id, "Пожалуйста, выберите действие:", reply_markup=kb)
+
+
+@admin_bot.message_handler(func=lambda msg: user_states.get(msg.from_user.id, {}).get("step") == "ask_notify_subscribers_for_cancel")
+def handle_notify_subscribers_for_cancel(message):
+    admin_id = message.from_user.id
+    text = (message.text or "").strip()
+    state = user_states.get(admin_id, {}) or {}
+    booking_id = state.get("pending_booking_id")
+    if text not in ("Да", "Нет"):
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        kb.add(types.KeyboardButton("Да"), types.KeyboardButton("Нет"))
+        admin_bot.send_message(message.chat.id, "Выберите: Да или Нет.", reply_markup=kb)
+        return
+    slot_ids = []
+    try:
+        slot_ids = get_slot_ids_by_booking(booking_id)
+    except Exception:
+        slot_ids = []
+    try:
+        reject_booking(booking_id)
+    except Exception as e:
+        admin_bot.send_message(message.chat.id, f"Ошибка отмены: {e}")
+        reset_user_state(admin_id, user_states)
+        return show_menu(message)
+    if text == "Да" and slot_ids:
+        try:
+            notify_subscribers_for_cancellation({"ids": slot_ids}, main_bot)
+        except Exception as e:
+            logger.error(f"Не удалось оповестить подписчиков: {e}")
+    try:
+        info = get_booking_info_by_id(booking_id)
+    except Exception:
+        info = None
+    creator_id = None
+    try:
+        creator_id = get_user_id_by_booking(booking_id)
+    except Exception:
+        creator_id = None
+    if creator_id and info:
+        try:
+            start_time = (info.get("start_time") or "").strip()
+            end_time = (info.get("end_time") or "").strip()
+            group_name = (info.get("group_name") or "").strip()
+            date_str = (info.get("date") or "").strip()
+            main_bot.send_message(
+                int(creator_id),
+                f"🚫 Ваша бронь для группы «{group_name or '-неизвестная группа-'}» {date_str} {start_time}–{end_time} была отменена администратором."
+            )
+        except Exception as e:
+            logger.error(f"Не удалось отправить уведомление пользователю {creator_id}: {e}")
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    kb.add(types.KeyboardButton("Отменить другую бронь"), types.KeyboardButton("На главную"))
+    state["step"] = "post_cancel_options"
+    user_states[admin_id] = state
+    admin_bot.send_message(message.chat.id, "Бронь отменена.", reply_markup=kb)
+
+
+@admin_bot.message_handler(func=lambda msg: user_states.get(msg.from_user.id, {}).get("step") == "post_cancel_options")
+def handle_post_cancel_options(message):
+    admin_id = message.from_user.id
+    text = (message.text or "").strip()
+    if text == "На главную":
+        reset_user_state(admin_id, user_states)
+        return show_menu(message)
+    if text == "Отменить другую бронь":
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT DISTINCT date FROM slots WHERE status = 2 ORDER BY date")
+            rows = cur.fetchall()
+        finally:
+            conn.close()
+        if not rows:
+            reset_user_state(admin_id, user_states)
+            admin_bot.send_message(message.chat.id, "Нет доступных дней с подтвержденными брони.")
+            return show_menu(message)
+        iso_dates = [d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d) for (d,) in rows]
+        btn_map = {format_date(d): d for d in iso_dates}
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+        labels = list(btn_map.keys())
+        for i in range(0, len(labels), 3):
+            markup.add(*[types.KeyboardButton(lbl) for lbl in labels[i:i+3]])
+        markup.add(types.KeyboardButton("На главную"))
+        user_states[admin_id] = {"step": "choose_cancel_day", "date_btn_map": btn_map}
+        admin_bot.send_message(message.chat.id, "Выберите день:", reply_markup=markup)
+        return
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    kb.add(types.KeyboardButton("Отменить другую бронь"), types.KeyboardButton("На главную"))
+    admin_bot.send_message(message.chat.id, "Пожалуйста, выберите действие:", reply_markup=kb)
+
+
 ### inline-хендлеры ###
 
 @admin_bot.callback_query_handler(func=lambda callback: callback.data.startswith("confirm:"))
