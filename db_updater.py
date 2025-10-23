@@ -16,12 +16,11 @@ def _to_date(obj):
 
 def update_slots(days_ahead: int = 28):
     today = datetime.now().date()
-    seven_days_ago = today - timedelta(days=7)
     hours = [f"{h:02d}:00" for h in range(24)]
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM slots WHERE date=%s", (seven_days_ago.strftime("%Y-%m-%d"),))
+            cur.execute("DELETE FROM slots WHERE date < %s", ((today - timedelta(days=7)).strftime("%Y-%m-%d"),))
             cur.execute("SELECT MAX(date) FROM slots")
             row = cur.fetchone()
             last_date_val = row[0] if row else None
