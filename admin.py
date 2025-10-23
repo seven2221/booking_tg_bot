@@ -442,7 +442,8 @@ def handle_cancel_booking(message):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT DISTINCT date FROM slots WHERE status = 2 ORDER BY date")
+        today = datetime.now().strftime("%Y-%m-%d")
+        cur.execute("SELECT DISTINCT date FROM slots WHERE date >= %s AND status = 2 ORDER BY date", (today,))
         rows = cur.fetchall()
     finally:
         conn.close()
@@ -558,7 +559,8 @@ def handle_confirm_cancel_choice(message):
         conn = get_connection()
         try:
             cur = conn.cursor()
-            cur.execute("SELECT DISTINCT date FROM slots WHERE status = 2 ORDER BY date")
+            today = datetime.now().strftime("%Y-%m-%d")
+            cur.execute("SELECT DISTINCT date FROM slots WHERE date >= %s AND status = 2 ORDER BY date", (today,))
             rows = cur.fetchall()
         finally:
             conn.close()
