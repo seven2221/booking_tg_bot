@@ -1,9 +1,11 @@
 import os
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
 import mysql.connector
 from mysql.connector import pooling, Error
 
+load_dotenv()
 
 DEFAULT_POOL_NAME = os.getenv("MYSQL_POOL_NAME", "app_pool")
 DEFAULT_POOL_SIZE = int(os.getenv("MYSQL_POOL_SIZE", "5"))

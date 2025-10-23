@@ -44,7 +44,6 @@ main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 user_states: dict[int, dict] = {}
 
-
 @main_bot.message_handler(func=lambda msg: msg.text == "На главную")
 def handle_back_to_main(message):
     reset_user_state(message.chat.id, user_states)
@@ -68,7 +67,6 @@ def show_menu(message):
         reply_markup=keyboard,
     )
     reset_user_state(message.chat.id, user_states)
-
 
 @main_bot.message_handler(commands=["start"])
 def start(message):
@@ -289,20 +287,8 @@ def handle_custom_booking_type(message):
 def ask_for_comment(chat_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("Прайс", "ОК")
-    main_bot.send_message(chat_id, "Добавьте комментарий (или нажмите ОК):", reply_markup=markup)
+    main_bot.send_message(chat_id, "Если вам необходимы какие-либо дополнительные услуги из нашего прайса, пожалуйста, укажите их в комментарии.\n\nЕсли доп.услуги не требуются, нажмите 'Ок'.:", reply_markup=markup)
     user_states[chat_id]["step"] = "waiting_for_comment"
-
-
-def show_comment_prompt(chat_id: int):
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    keyboard.row(types.KeyboardButton("Прайс"), types.KeyboardButton("Ок"))
-    main_bot.send_message(
-        chat_id,
-        "Если вам необходимы какие-либо дополнительные услуги из нашего прайса, "
-        "пожалуйста, укажите их в комментарии.\n\nЕсли доп.услуги не требуются, "
-        "нажмите 'Ок'.",
-        reply_markup=keyboard,
-    )
 
 
 @main_bot.message_handler(func=lambda msg: isinstance(user_states.get(msg.chat.id), dict) and user_states[msg.chat.id].get("step") == "waiting_for_comment" and msg.text == "Прайс")
@@ -314,7 +300,6 @@ def show_price_list_during_booking(message):
     except FileNotFoundError:
         price_list = "Информация о прайсе временно недоступна."
     main_bot.send_message(chat_id, price_list)
-    show_comment_prompt(chat_id)
 
 
 @main_bot.message_handler(func=lambda m: user_states.get(m.chat.id, {}).get("step") == "waiting_for_comment")
@@ -329,7 +314,11 @@ def handle_comment_input(message):
     group_name = user_states[chat_id]["group_name"]
     booking_type = user_states[chat_id]["booking_type"]
     contact_info = user_states[chat_id]["contact"]
-    end_time = f"{int(selected_time[:2]) + hours:02d}:00"
+    start_dt = datetime.strptime(f"{selected_day} {selected_time}", "%Y-%m-%d %H:%M")
+    end_dt = start_dt + timedelta(hours=hours)
+    start_text = start_dt.strftime("%H:%M")
+    end_text  = end_dt.strftime("%H:%M")
+    date_text = format_date(selected_day)
     if message.from_user.username:
         mention_raw = f"@{message.from_user.username}"
     elif contact_info.startswith('@'):
@@ -361,14 +350,14 @@ def handle_comment_input(message):
         chat_id,
         f"Спасибо! 👍\n"
         f"Вы забронировали {hours} {get_hour_word(hours)} "
-        f"с {selected_time} по {end_time} {format_date(selected_day)}\n"
+        f"с {start_text} по {end_text} {format_date(selected_day)}\n"
         f"Группа: {group_name}",
         reply_markup=markup,
     )
     note = (
         "🔔 Новая бронь!\n"
-        f"Дата: {selected_day}\n"
-        f"Время: {selected_time}-{end_time}\n"
+        f"Дата: {date_text}\n"
+        f"Время: {start_text}-{end_text}\n"
         f"Группа: {safe_group}\n"
         f"Тип: {safe_type}\n"
         f"Комментарий: {safe_comment}\n"
