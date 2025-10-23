@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 from lib.db_init import get_connection
+
+load_dotenv()
 
 def _to_date(obj):
     if hasattr(obj, "date"):
