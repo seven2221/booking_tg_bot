@@ -582,7 +582,27 @@ def handle_confirm_cancel_choice(message):
     if text == "Да":
         state["step"] = "ask_notify_subscribers_for_cancel"
         user_states[admin_id] = state
-
+        try:
+            info = get_booking_info_by_id(booking_id)
+        except Exception:
+            info = None
+        creator_id = None
+        try:
+            creator_id = get_user_id_by_booking(booking_id)
+        except Exception:
+            creator_id = None
+        if creator_id and info:
+            try:
+                start_time = (info.get("start_time") or "").strip()
+                end_time = (info.get("end_time") or "").strip()
+                group_name = (info.get("group_name") or "").strip()
+                date_str = (info.get("date") or "").strip()
+                main_bot.send_message(
+                    int(creator_id),
+                    f"🚫  К сожалению, по техническим причинам мы вынуждены отменить вашу бронь для группы «{group_name or 'неизвестная группа'}» {date_str} {start_time}–{end_time}.\nПриносим извинения за неудобства. 😔\nПожалуйста, выберите другое время.\nСвязь с админом: @cyberocalypse"
+                )
+            except Exception as e:
+                logger.error(f"Не удалось отправить уведомление пользователю {creator_id}: {e}")
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
         kb.add(types.KeyboardButton("Да"), types.KeyboardButton("Нет"))
         admin_bot.send_message(message.chat.id, "Уведомить подписавшихся?", reply_markup=kb)
@@ -619,27 +639,6 @@ def handle_notify_subscribers_for_cancel(message):
             notify_subscribers_for_cancellation({"ids": slot_ids}, main_bot)
         except Exception as e:
             logger.error(f"Не удалось оповестить подписчиков: {e}")
-    try:
-        info = get_booking_info_by_id(booking_id)
-    except Exception:
-        info = None
-    creator_id = None
-    try:
-        creator_id = get_user_id_by_booking(booking_id)
-    except Exception:
-        creator_id = None
-    if creator_id and info:
-        try:
-            start_time = (info.get("start_time") or "").strip()
-            end_time = (info.get("end_time") or "").strip()
-            group_name = (info.get("group_name") or "").strip()
-            date_str = (info.get("date") or "").strip()
-            main_bot.send_message(
-                int(creator_id),
-                f"🚫 Ваша бронь для группы «{group_name or '-неизвестная группа-'}» {date_str} {start_time}–{end_time} была отменена администратором."
-            )
-        except Exception as e:
-            logger.error(f"Не удалось отправить уведомление пользователю {creator_id}: {e}")
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     kb.add(types.KeyboardButton("Отменить другую бронь"), types.KeyboardButton("На главную"))
     state["step"] = "post_cancel_options"
